@@ -1,0 +1,685 @@
+// ============================================================
+// Employee Monitoring System — Prisma Schema
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum Role {
+  admin
+  manager
+  employee
+}
+
+enum EmployeeStatus {
+  active
+  on_leave
+  remote
+  terminated
+}
+
+enum AttendanceStatus {
+  present
+  late
+  absent
+  remote
+  holiday
+}
+
+enum CheckInMethod {
+  qr
+  manual
+  auto
+}
+
+enum LeaveType {
+  sick
+  casual
+  earned
+  maternity
+  paternity
+  unpaid
+}
+
+enum LeaveStatus {
+  pending
+  approved
+  rejected
+}
+
+enum HolidayType {
+  national
+  regional
+  company
+}
+
+enum TaskStatus {
+  todo
+  in_progress
+  in_review
+  done
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+  urgent
+}
+
+enum ProjectStatus {
+  active
+  completed
+  on_hold
+}
+
+enum PayrollStatus {
+  draft
+  processed
+  paid
+}
+
+enum AlertType {
+  idle_timeout
+  unusual_activity
+  missed_shift
+  geofence_violation
+  overtime_threshold
+}
+
+enum NotificationType {
+  alert
+  success
+  info
+}
+
+enum AuditStatus {
+  success
+  warning
+  denied
+}
+
+enum ShiftStatus {
+  draft
+  published
+}
+
+// ============================================================
+// COMPANY
+// ============================================================
+
+model Company {
+  id          String   @id @default(cuid())
+  name        String
+  address     String?
+  country     String?
+  logoUrl     String?
+  plan        String   @default("starter")
+  seatLimit   Int      @default(10)
+  billingDate DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users         User[]
+  departments   Department[]
+  settings      CompanySettings?
+  geofences     Geofence[]
+  holidays      Holiday[]
+  alerts        AlertConfig[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+
+  @@map("companies")
+}
+
+// ============================================================
+// DEPARTMENTS
+// ============================================================
+
+model Department {
+  id        String   @id @default(cuid())
+  name      String
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  employees User[]
+
+  @@unique([name, companyId])
+  @@map("departments")
+}
+
+// ============================================================
+// USERS
+// ============================================================
+
+model User {
+  id           String         @id @default(cuid())
+  employeeId   String         @unique
+  name         String
+  email        String         @unique
+  passwordHash String
+  role         Role           @default(employee)
+  status       EmployeeStatus @default(active)
+  phone        String?
+  position     String?
+  avatarUrl    String?
+  joinDate     DateTime       @default(now())
+  baseRate     Float          @default(0)
+
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret  String?
+  refreshToken     String? @db.Text
+
+  screenshotsBlurred Boolean  @default(false)
+  locationTracking   Boolean  @default(true)
+  activityLogging    Boolean  @default(true)
+  consentGiven       Boolean  @default(false)
+  consentGivenAt     DateTime?
+  screenshotInterval Int?
+
+  companyId    String
+  company      Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+  managerId    String?
+  manager      User?       @relation("ManagerEmployees", fields: [managerId], references: [id])
+  subordinates User[]      @relation("ManagerEmployees")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attendanceRecords  AttendanceRecord[]
+  timeEntries        TimeEntry[]
+  screenshots        Screenshot[]
+  activityLogs       ActivityLog[]
+  appUsages          AppUsage[]
+  websiteUsages      WebsiteUsage[]
+  locationLogs       LocationLog[]
+  leaves             Leave[]            @relation("EmployeeLeaves")
+  leaveApprovals     Leave[]            @relation("LeaveApprovals")
+  taskAssignments    TaskAssignee[]
+  projectMembers     ProjectMember[]
+  payrolls           Payroll[]
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  shifts             Shift[]
+  taskComments       TaskComment[]
+
+  @@index([companyId])
+  @@index([managerId])
+  @@map("users")
+}
+
+// ============================================================
+// ATTENDANCE
+// ============================================================
+
+model AttendanceRecord {
+  id         String           @id @default(cuid())
+  employeeId String
+  employee   User             @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date       DateTime         @db.Date
+  status     AttendanceStatus @default(absent)
+  checkIn    DateTime?
+  checkOut   DateTime?
+  method     CheckInMethod    @default(manual)
+  lat        Float?
+  lng        Float?
+  qrCode     String?
+  notes      String?
+  createdAt  DateTime         @default(now())
+
+  @@unique([employeeId, date])
+  @@index([date])
+  @@map("attendance_records")
+}
+
+model Shift {
+  id         String      @id @default(cuid())
+  name       String
+  startTime  String
+  endTime    String
+  days       Json
+  status     ShiftStatus @default(draft)
+  employeeId String
+  employee   User        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@map("shifts")
+}
+
+model Leave {
+  id            String      @id @default(cuid())
+  employeeId    String
+  employee      User        @relation("EmployeeLeaves", fields: [employeeId], references: [id], onDelete: Cascade)
+  type          LeaveType
+  startDate     DateTime    @db.Date
+  endDate       DateTime    @db.Date
+  reason        String?     @db.Text
+  status        LeaveStatus @default(pending)
+  approverId    String?
+  approver      User?       @relation("LeaveApprovals", fields: [approverId], references: [id])
+  approvedAt    DateTime?
+  rejectionNote String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([employeeId])
+  @@index([status])
+  @@map("leaves")
+}
+
+model Holiday {
+  id          String      @id @default(cuid())
+  companyId   String
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name        String
+  date        DateTime    @db.Date
+  type        HolidayType @default(national)
+  description String?
+  year        Int
+
+  @@index([companyId, year])
+  @@map("holidays")
+}
+
+// ============================================================
+// TIME TRACKING
+// ============================================================
+
+model TimeEntry {
+  id              String   @id @default(cuid())
+  employeeId      String
+  employee        User     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date            DateTime @db.Date
+  startTime       DateTime
+  endTime         DateTime?
+  durationSeconds Int      @default(0)
+  title           String?
+  projectId       String?
+  project         Project? @relation(fields: [projectId], references: [id])
+  description     String?  @db.Text
+  source          String   @default("timer")
+  isRunning       Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([employeeId, date])
+  @@map("time_entries")
+}
+
+// ============================================================
+// SCREENSHOTS
+// ============================================================
+
+model Screenshot {
+  id           String    @id @default(cuid())
+  employeeId   String
+  employee     User      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  timestamp    DateTime
+  imageUrl     String
+  thumbnailUrl String?
+  appName      String?
+  activityScore Int      @default(0)
+  isBlurred    Boolean   @default(false)
+  isFlagged    Boolean   @default(false)
+  isReviewed   Boolean   @default(false)
+  isDeleted    Boolean   @default(false)
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([employeeId, timestamp])
+  @@index([isDeleted])
+  @@map("screenshots")
+}
+
+// ============================================================
+// ACTIVITY
+// ============================================================
+
+model ActivityLog {
+  id            String   @id @default(cuid())
+  employeeId    String
+  employee      User     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date          DateTime @db.Date
+  totalSeconds  Int      @default(0)
+  activeSeconds Int      @default(0)
+  idleSeconds   Int      @default(0)
+  productivityScore Int  @default(0)
+  hourlyData    Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([employeeId, date])
+  @@map("activity_logs")
+}
+
+model AppUsage {
+  id           String   @id @default(cuid())
+  employeeId   String
+  employee     User     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date         DateTime @db.Date
+  appName      String
+  category     String
+  usageSeconds Int      @default(0)
+  usagePercent Float    @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([employeeId, date])
+  @@map("app_usages")
+}
+
+model WebsiteUsage {
+  id           String   @id @default(cuid())
+  employeeId   String
+  employee     User     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date         DateTime @db.Date
+  domain       String
+  category     String
+  visitCount   Int      @default(0)
+  usageSeconds Int      @default(0)
+  usagePercent Float    @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([employeeId, date])
+  @@map("website_usages")
+}
+
+// ============================================================
+// LOCATION
+// ============================================================
+
+model Geofence {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name      String
+  radius    Int
+  lat       Float?
+  lng       Float?
+  color     String   @default("blue")
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  locationLogs LocationLog[]
+
+  @@index([companyId])
+  @@map("geofences")
+}
+
+model LocationLog {
+  id         String    @id @default(cuid())
+  employeeId String
+  employee   User      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  geofenceId String?
+  geofence   Geofence? @relation(fields: [geofenceId], references: [id])
+  type       String
+  lat        Float
+  lng        Float
+  address    String?
+  speed      Float?
+  timestamp  DateTime
+  createdAt  DateTime  @default(now())
+
+  @@index([employeeId, timestamp])
+  @@map("location_logs")
+}
+
+// ============================================================
+// TASKS & PROJECTS
+// ============================================================
+
+model Project {
+  id          String        @id @default(cuid())
+  companyId   String
+  name        String
+  description String?       @db.Text
+  status      ProjectStatus @default(active)
+  startDate   DateTime?     @db.Date
+  endDate     DateTime?     @db.Date
+  progress    Int           @default(0)
+  budget      Float?
+  spent       Float?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  tasks       Task[]
+  members     ProjectMember[]
+  milestones  Milestone[]
+  timeEntries TimeEntry[]
+
+  @@map("projects")
+}
+
+model Milestone {
+  id          String    @id @default(cuid())
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String
+  dueDate     DateTime  @db.Date
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@map("milestones")
+}
+
+model ProjectMember {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String  @default("member")
+
+  @@unique([projectId, userId])
+  @@map("project_members")
+}
+
+model Task {
+  id             String       @id @default(cuid())
+  projectId      String
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title          String
+  description    String?      @db.Text
+  status         TaskStatus   @default(todo)
+  priority       TaskPriority @default(medium)
+  dueDate        DateTime?    @db.Date
+  tags           Json?
+  estimatedHours Float?
+  actualHours    Float?
+  position       Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  assignees TaskAssignee[]
+  comments  TaskComment[]
+
+  @@index([projectId, status])
+  @@map("tasks")
+}
+
+model TaskAssignee {
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, userId])
+  @@map("task_assignees")
+}
+
+model TaskComment {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("task_comments")
+}
+
+// ============================================================
+// PAYROLL
+// ============================================================
+
+model Payroll {
+  id            String        @id @default(cuid())
+  employeeId    String
+  employee      User          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  month         Int
+  year          Int
+  hoursWorked   Float
+  baseRate      Float
+  baseSalary    Float
+  overtimeHours Float         @default(0)
+  overtimePay   Float         @default(0)
+  taxRate       Float         @default(0.20)
+  taxDeduction  Float
+  deductions    Float         @default(0)
+  netPay        Float
+  status        PayrollStatus @default(draft)
+  paidAt        DateTime?
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@unique([employeeId, month, year])
+  @@index([status])
+  @@map("payrolls")
+}
+
+// ============================================================
+// ALERTS & NOTIFICATIONS
+// ============================================================
+
+model AlertConfig {
+  id          String    @id @default(cuid())
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  type        AlertType
+  enabled     Boolean   @default(true)
+  threshold   Int?
+  sensitivity String?
+  zones       Json?
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([companyId, type])
+  @@map("alert_configs")
+}
+
+model Notification {
+  id          String           @id @default(cuid())
+  companyId   String
+  company     Company          @relation(fields: [companyId], references: [id])
+  recipientId String
+  recipient   User             @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  title       String
+  description String           @db.Text
+  type        NotificationType
+  category    String
+  unread      Boolean          @default(true)
+  date        DateTime         @default(now())
+  deletedAt   DateTime?
+  createdAt   DateTime         @default(now())
+
+  @@index([recipientId, unread])
+  @@index([companyId])
+  @@map("notifications")
+}
+
+// ============================================================
+// COMPLIANCE
+// ============================================================
+
+model AuditLog {
+  id        String      @id @default(cuid())
+  companyId String
+  company   Company     @relation(fields: [companyId], references: [id])
+  userId    String?
+  user      User?       @relation(fields: [userId], references: [id])
+  action    String
+  ip        String?
+  userAgent String?
+  status    AuditStatus @default(success)
+  metadata  Json?
+  timestamp DateTime    @default(now())
+
+  @@index([companyId, timestamp])
+  @@index([userId])
+  @@map("audit_logs")
+}
+
+model ComplianceConsent {
+  id            String    @id @default(cuid())
+  companyId     String
+  employeeId    String
+  policyVersion String
+  consentGiven  Boolean   @default(false)
+  givenAt       DateTime?
+  sentAt        DateTime  @default(now())
+  ipAddress     String?
+
+  @@unique([employeeId, policyVersion])
+  @@map("compliance_consents")
+}
+
+// ============================================================
+// SETTINGS
+// ============================================================
+
+model CompanySettings {
+  id                String  @id @default(cuid())
+  companyId         String  @unique
+  company           Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  screenshotInterval Int     @default(10)
+  idleThreshold      Int     @default(5)
+  enableBlur         Boolean @default(false)
+  geoFenceRange      Int     @default(50)
+
+  dataRetentionDays  Int     @default(365)
+
+  emailNotifications Boolean @default(true)
+  pushNotifications  Boolean @default(true)
+  smsNotifications   Boolean @default(false)
+  weeklyDigest       Boolean @default(false)
+
+  theme              String  @default("dark")
+  fontSize           String  @default("medium")
+
+  taxRate            Float   @default(0.20)
+
+  slackEnabled       Boolean @default(false)
+  slackToken         String?
+  jiraEnabled        Boolean @default(false)
+  jiraToken          String?
+  gWorkspaceEnabled  Boolean @default(false)
+  gWorkspaceToken    String?
+  quickBooksEnabled  Boolean @default(false)
+  xeroEnabled        Boolean @default(false)
+  paychexEnabled     Boolean @default(false)
+
+  twoFactorRequired  Boolean @default(false)
+  encryptionEnabled  Boolean @default(true)
+  gdprRegionLock     Boolean @default(true)
+
+  updatedAt          DateTime @updatedAt
+
+  @@map("company_settings")
+}
