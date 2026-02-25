@@ -7,24 +7,19 @@ import {
     ArrowRight, CheckCircle2, X, Car, Activity, Zap
 } from 'lucide-react';
 import { cn } from '../utils/cn';
-
-// Demo Example: Expanded Mock Routes for History
-const MOCK_ROUTES = {
-    '101': [
-        { x: 20, y: 30 }, { x: 25, y: 35 }, { x: 35, y: 32 }, { x: 45, y: 40 },
-        { x: 50, y: 55 }, { x: 60, y: 50 }, { x: 70, y: 60 }, { x: 80, y: 55 }, { x: 85, y: 40 }
-    ],
-    '102': [
-        { x: 10, y: 80 }, { x: 20, y: 75 }, { x: 30, y: 85 }, { x: 45, y: 70 },
-        { x: 60, y: 75 }, { x: 70, y: 65 }, { x: 85, y: 70 }, { x: 90, y: 80 }
-    ],
-    'default': [
-        { x: 30, y: 20 }, { x: 40, y: 30 }, { x: 50, y: 25 }, { x: 60, y: 40 },
-        { x: 70, y: 35 }, { x: 80, y: 50 }
-    ]
-};
+import { apiClient } from '../utils/apiClient';
+import { useRealTime } from '../hooks/RealTimeContext';
 
 export const LocationTracking = () => {
+    const {
+        geofences,
+        locations,
+        checkIns,
+        isLoading,
+        addGeofence,
+        toggleGeofence,
+    } = useRealTime();
+
     const [activeTab, setActiveTab] = useState('live');
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedEmployee, setSelectedEmployee] = useState(null);
@@ -33,31 +28,25 @@ export const LocationTracking = () => {
     const [zoomLevel, setZoomLevel] = useState(12);
     const [showAddZone, setShowAddZone] = useState(false);
     const [showLogsModal, setShowLogsModal] = useState(false);
-    const [geofences, setGeofences] = useState([
-        { id: 1, name: 'Main HQ Perimeter', radius: '500m', color: 'bg-blue-500/10 text-blue-500 border-blue-500/20', enabled: true },
-        { id: 2, name: 'North Logistics Hub', radius: '800m', color: 'bg-purple-500/10 text-purple-500 border-purple-500/20', enabled: true },
-        { id: 3, name: 'Client Site Alpha', radius: '300m', color: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20', enabled: false },
-        { id: 4, name: 'Storage Yard B', radius: '1.2km', color: 'bg-amber-500/10 text-amber-500 border-amber-500/20', enabled: true },
-        { id: 5, name: 'Downtown Branch', radius: '400m', color: 'bg-rose-500/10 text-rose-500 border-rose-500/20', enabled: true },
-        { id: 6, name: 'Employee Housing', radius: '600m', color: 'bg-indigo-500/10 text-indigo-500 border-indigo-500/20', enabled: true }
-    ]);
+    const [locationHistory, setLocationHistory] = useState([]);
+    const [newZoneData, setNewZoneData] = useState({ name: '', radius: 500, lat: 0, lng: 0 });
 
-    const [employees] = useState([
-        { id: 101, employeeId: 'EMP-001', name: 'James Wilson', status: 'moving', address: '4th Ave, Manhattan Office', lastSeen: '2m ago' },
-        { id: 102, employeeId: 'EMP-002', name: 'Sarah Chen', status: 'idle', address: 'Brooklyn Warehouse', lastSeen: '5m ago' },
-        { id: 103, employeeId: 'EMP-003', name: 'Robert Fox', status: 'moving', address: 'Queens Distribution', lastSeen: 'Just now' },
-        { id: 104, employeeId: 'EMP-004', name: 'Amelia Grant', status: 'moving', address: 'Jersey City Hub', lastSeen: '1m ago' },
-    ]);
-
-    const [checkIns] = useState([
-        { id: 1, name: 'James Wilson', time: '10:42 AM', location: 'Main HQ Perimeter', type: 'in' },
-        { id: 2, name: 'Sarah Chen', time: '10:38 AM', location: 'North Logistics Hub', type: 'in' },
-        { id: 3, name: 'Robert Fox', time: '10:15 AM', location: 'Downtown Branch', type: 'out' },
-        { id: 4, name: 'Amelia Grant', time: '09:50 AM', location: 'Main HQ Perimeter', type: 'in' },
-        { id: 5, name: 'James Wilson', time: '09:30 AM', location: 'Downtown Branch', type: 'out' },
-    ]);
-
-    const [newZoneData, setNewZoneData] = useState({ name: '', radius: '500m' });
+    // Fetch history when a specific employee's history tab is selected
+    useEffect(() => {
+        if (activeTab === 'history' && selectedEmployee) {
+            const fetchHistory = async () => {
+                try {
+                    const today = new Date().toISOString().split('T')[0];
+                    const res = await apiClient.get(`/location/history?employeeId=${selectedEmployee}&date=${today}`);
+                    setLocationHistory(res.data || []);
+                    setPlaybackTime(0);
+                } catch (error) {
+                    console.error("Failed to fetch history", error);
+                }
+            };
+            fetchHistory();
+        }
+    }, [activeTab, selectedEmployee]);
 
     // Handle History Animation
     useEffect(() => {
@@ -72,33 +61,15 @@ export const LocationTracking = () => {
         return () => clearInterval(interval);
     }, [isPlaying, activeTab]);
 
-    // Live movement simulation offsets
-    const [liveOffsets, setLiveOffsets] = useState({});
-    useEffect(() => {
-        const interval = setInterval(() => {
-            setLiveOffsets(prev => {
-                const next = { ...prev };
-                employees.forEach(emp => {
-                    if (emp.status === 'moving') {
-                        next[emp.id] = {
-                            x: (next[emp.id]?.x || 0) + (Math.random() - 0.5) * 0.5,
-                            y: (next[emp.id]?.y || 0) + (Math.random() - 0.5) * 0.5
-                        };
-                    }
-                });
-                return next;
-            });
-        }, 1000);
-        return () => clearInterval(interval);
-    }, [employees]);
+    // Live tracking uses real positions from 'locations' provided by RealTimeContext
+    const liveOffsets = {};
 
     const currentRoute = useMemo(() => {
-        const routeId = selectedEmployee ? String(selectedEmployee) : 'default';
-        return MOCK_ROUTES[routeId] || MOCK_ROUTES['default'];
-    }, [selectedEmployee]);
+        return locationHistory.map(h => ({ x: (h.lng + 180) / 3.6, y: (90 - h.lat) / 1.8 }));
+    }, [locationHistory]);
 
     const currentRoutePos = useMemo(() => {
-        if (!currentRoute || currentRoute.length < 2) return { x: 0, y: 0 };
+        if (!currentRoute || currentRoute.length < 2) return { x: 50, y: 50 };
         const totalPoints = currentRoute.length - 1;
         const index = Math.min(Math.floor((playbackTime / 100) * totalPoints), totalPoints - 1);
         const segmentProgress = ((playbackTime / 100) * totalPoints) - index;
@@ -112,26 +83,15 @@ export const LocationTracking = () => {
         };
     }, [playbackTime, currentRoute]);
 
-    const filteredLocations = employees.filter(emp =>
-        emp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        emp.employeeId.toLowerCase().includes(searchQuery.toLowerCase())
+    const filteredLocations = (locations || []).filter(emp =>
+        emp.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        emp.employeeId?.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
-    const toggleGeofence = (id) => {
-        setGeofences(prev => prev.map(f => f.id === id ? { ...f, enabled: !f.enabled } : f));
-    };
-
-    const handleAddZone = () => {
+    const handleAddZone = async () => {
         if (!newZoneData.name) return;
-        const newZone = {
-            id: geofences.length + 1,
-            name: newZoneData.name,
-            radius: newZoneData.radius,
-            color: 'bg-primary-500/10 text-primary-500 border-primary-500/20',
-            enabled: true
-        };
-        setGeofences([newZone, ...geofences]);
-        setNewZoneData({ name: '', radius: '500m' });
+        await addGeofence(newZoneData);
+        setNewZoneData({ name: '', radius: 500, lat: 0, lng: 0 });
         setShowAddZone(false);
     };
 
@@ -198,7 +158,7 @@ export const LocationTracking = () => {
                                 <div className="relative w-full h-[55vh] lg:h-auto lg:flex-1 rounded-2xl lg:rounded-[3.5rem] border-0 lg:border-4 border-white dark:border-slate-800 bg-slate-100 dark:bg-slate-950 shadow-xl lg:shadow-[0_48px_96px_-24px_rgba(0,0,0,0.15)] group overflow-hidden">
                                     {/* Map Foundation */}
                                     <div className="absolute inset-0 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] dark:bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px] opacity-20" />
-                                    <div className="absolute inset-0 bg-[url('https://api.mapbox.com/styles/v1/mapbox/light-v10/static/-74.006,40.7128,12,0/1200x800?access_token=pk.eyJ1IjoibW9ja2VydSIsImEiOiJjbHN2eXJ2NHkwMG5yMnJxd2syZ3p3M2ozIn0.mock_token')] bg-cover bg-center grayscale opacity-30 dark:invert dark:opacity-10 transition-all duration-1000 group-hover:grayscale-0 group-hover:opacity-80 dark:group-hover:invert-0" />
+                                    <div className="absolute inset-0 bg-slate-200 dark:bg-slate-900 animate-pulse opacity-10" />
 
                                     {/* Map HUD UI */}
                                     <div className="absolute top-8 left-8 z-30 flex flex-col gap-3">
@@ -239,7 +199,7 @@ export const LocationTracking = () => {
                                             >
                                                 <div className="absolute bottom-full mb-4 left-1/2 -translate-x-1/2 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl p-3 rounded-2xl shadow-2xl border border-white dark:border-white/5 w-48 flex items-center gap-3">
                                                     <div className="h-10 w-10 rounded-xl overflow-hidden border-2 border-primary-500 p-0.5">
-                                                        <img src={`https://i.pravatar.cc/150?u=${selectedEmployee || 101}`} className="h-full w-full object-cover rounded-lg" alt="" />
+                                                        <img src={(locations.find(l => l.id === selectedEmployee) || {}).avatarUrl || `https://i.pravatar.cc/150?u=${selectedEmployee || 101}`} className="h-full w-full object-cover rounded-lg" alt="" />
                                                     </div>
                                                     <div className="flex-1 min-w-0">
                                                         <p className="text-xs font-black truncate text-slate-900 dark:text-white leading-tight">History Replay</p>
@@ -265,7 +225,7 @@ export const LocationTracking = () => {
                                                     <div className="flex-1 space-y-2">
                                                         <div className="flex items-center justify-between px-1">
                                                             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Time Scrub</span>
-                                                            <span className="text-[10px] font-black text-primary-500 tracking-tighter tabular-nums">12:00 PM — 04:30 PM</span>
+                                                            <span className="text-[10px] font-black text-primary-500 tracking-tighter tabular-nums">Playback Timeline</span>
                                                         </div>
                                                         <input
                                                             type="range"
@@ -285,25 +245,29 @@ export const LocationTracking = () => {
                                     {activeTab === 'live' && filteredLocations.map((loc, idx) => {
                                         const isFocused = selectedEmployee === loc.id;
                                         const offset = liveOffsets[loc.id] || { x: 0, y: 0 };
+
+                                        const x = (loc.lng + 180) / 3.6;
+                                        const y = (90 - loc.lat) / 1.8;
+
                                         return (
                                             <div
                                                 key={loc.id}
                                                 className={cn("absolute transition-all duration-1000 ease-linear cursor-pointer z-10", isFocused && "z-20")}
-                                                style={{ top: `${35 + idx * 8 + offset.y}%`, left: `${25 + idx * 12 + offset.x}%`, transform: isFocused ? "scale(1.1) translateY(-10px)" : "scale(1)" }}
+                                                style={{ top: `${y}%`, left: `${x}%`, transform: isFocused ? "scale(1.1) translateY(-10px)" : "scale(1)" }}
                                                 onClick={() => setSelectedEmployee(isFocused ? null : loc.id)}
                                             >
                                                 <div className={cn("absolute bottom-full mb-4 left-1/2 -translate-x-1/2 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl p-4 rounded-[2rem] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.2)] border border-white dark:border-white/5 transition-all w-52 flex items-center gap-4", isFocused ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-90 translate-y-4 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:translate-y-0 group-hover:pointer-events-auto")}>
                                                     <div className="h-12 w-12 rounded-2xl overflow-hidden border-2 border-primary-500 p-0.5 shadow-lg flex-shrink-0">
-                                                        <img src={`https://i.pravatar.cc/150?u=${loc.employeeId}`} className="h-full w-full object-cover rounded-[14px]" alt="" />
+                                                        <img src={loc.avatarUrl || `https://i.pravatar.cc/150?u=${loc.id}`} className="h-full w-full object-cover rounded-[14px]" alt="" />
                                                     </div>
                                                     <div className="flex-1 min-w-0">
                                                         <p className="text-sm font-black truncate text-slate-900 dark:text-white leading-tight">{loc.name}</p>
                                                         <p className="text-[9px] font-black uppercase text-primary-500 tracking-widest mt-0.5">{loc.status}</p>
                                                     </div>
                                                 </div>
-                                                <div className={cn("relative h-10 w-10 rounded-2xl border-4 border-white dark:border-slate-900 shadow-2xl flex items-center justify-center transition-all", loc.status === 'moving' ? "bg-emerald-500" : "bg-amber-500")}>
+                                                <div className={cn("relative h-10 w-10 rounded-2xl border-4 border-white dark:border-slate-900 shadow-2xl flex items-center justify-center transition-all", loc.status === 'active' ? "bg-emerald-500" : "bg-amber-500")}>
                                                     <MapPin size={18} className="text-white fill-white/20" />
-                                                    {loc.status === 'moving' && <div className="absolute -inset-2 bg-emerald-400 rounded-full animate-ping opacity-20 pointer-events-none" />}
+                                                    {loc.status === 'active' && <div className="absolute -inset-2 bg-emerald-400 rounded-full animate-ping opacity-20 pointer-events-none" />}
                                                 </div>
                                             </div>
                                         );
@@ -316,13 +280,13 @@ export const LocationTracking = () => {
                                                 <div className="flex items-center gap-1.5 px-6 py-3 bg-white dark:bg-slate-800 rounded-full shadow-sm">
                                                     <TrendingUp size={14} className="text-blue-500" />
                                                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-2">Today</span>
-                                                    <span className="text-sm font-black text-slate-900 dark:text-white">12.4 km</span>
+                                                    <span className="text-sm font-black text-slate-900 dark:text-white">Live</span>
                                                 </div>
                                                 <div className="h-4 w-px bg-slate-200 dark:bg-slate-700 mx-1" />
                                                 <div className="flex items-center gap-1.5 px-6 py-3 bg-white dark:bg-slate-800 rounded-full shadow-sm">
                                                     <Activity size={14} className="text-purple-500" />
                                                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-2">Nodes</span>
-                                                    <span className="text-sm font-black text-slate-900 dark:text-white">24 Active</span>
+                                                    <span className="text-sm font-black text-slate-900 dark:text-white">{locations.length} Active</span>
                                                 </div>
                                             </div>
                                         </div>
@@ -365,15 +329,15 @@ export const LocationTracking = () => {
                                                 )}
                                             >
                                                 <div className="h-10 w-10 rounded-xl overflow-hidden border-2 border-slate-100 dark:border-slate-800 group-hover:border-primary-500/30 transition-all">
-                                                    <img src={`https://i.pravatar.cc/150?u=${loc.employeeId}`} className="h-full w-full object-cover" alt="" />
+                                                    <img src={loc.avatarUrl || `https://i.pravatar.cc/150?u=${loc.id}`} className="h-full w-full object-cover" alt="" />
                                                 </div>
                                                 <div className="flex-1 min-w-0">
                                                     <p className="text-[13px] font-black truncate text-slate-900 dark:text-white leading-tight">{loc.name}</p>
-                                                    <p className="text-[10px] font-bold text-slate-400 truncate tracking-tight">{loc.address}</p>
+                                                    <p className="text-[10px] font-bold text-slate-400 truncate tracking-tight">{loc.position || 'Employee'}</p>
                                                 </div>
                                                 <div className={cn(
                                                     "h-2 w-2 rounded-full",
-                                                    loc.status === 'moving' ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" : "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]"
+                                                    loc.status === 'active' ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" : "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]"
                                                 )} />
                                             </div>
                                         ))}
@@ -398,9 +362,13 @@ export const LocationTracking = () => {
                                                         "text-[8px] font-black uppercase px-2 py-0.5 rounded-md border",
                                                         log.type === 'in' ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-rose-50 text-rose-600 border-rose-100"
                                                     )}>{log.type === 'in' ? 'Check-In' : 'Check-Out'}</span>
-                                                    <p className="text-[9px] font-black text-slate-300 uppercase tabular-nums">{log.time}</p>
+                                                    <p className="text-[9px] font-black text-slate-300 uppercase tabular-nums">
+                                                        {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                    </p>
                                                 </div>
-                                                <p className="text-[12px] font-black text-slate-900 dark:text-white truncate">{log.name}</p>
+                                                <p className="text-[12px] font-black text-slate-900 dark:text-white truncate">
+                                                    {log.employee?.name || 'Someone'} @ {log.geofence?.name || 'Unknown'}
+                                                </p>
                                             </div>
                                         ))}
                                     </div>

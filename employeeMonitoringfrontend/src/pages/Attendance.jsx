@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
     Calendar as CalendarIcon,
     Clock,
@@ -37,8 +37,8 @@ import {
     Cell,
     ComposedChart
 } from 'recharts';
-import { shifts, leaveSummary } from '../data/mockData';
 import { useRealTime } from '../hooks/RealTimeContext';
+import { apiClient } from '../utils/apiClient';
 
 const cn = (...inputs) => twMerge(clsx(inputs));
 
@@ -55,28 +55,14 @@ const StatCard = ({ title, value, icon: Icon, color, subValue, trend }) => (
     </div>
 );
 
-// Mock data for visualizations
-const lateTrendData = [
-    { day: 'Mon', count: 2 },
-    { day: 'Tue', count: 5 },
-    { day: 'Wed', count: 3 },
-    { day: 'Thu', count: 1 },
-    { day: 'Fri', count: 4 },
-];
-
-const shiftDistributionData = [
-    { name: 'Morning', employees: 45, color: '#3b82f6' },
-    { name: 'Evening', employees: 32, color: '#8b5cf6' },
-    { name: 'Night', employees: 18, color: '#6366f1' },
-];
 
 export function Attendance() {
-    const { attendance } = useRealTime();
+    const { attendance, employees } = useRealTime();
     const [qrStatus, setQrStatus] = useState('idle'); // idle, active, checked-in
     const [isQrMinimized, setIsQrMinimized] = useState(false);
     const [view, setView] = useState('calendar');
-    const [currentDate, setCurrentDate] = useState(new Date('2026-02-01'));
-    const [currentMonth, setCurrentMonth] = useState('February 2026');
+    const [currentDate, setCurrentDate] = useState(new Date());
+    const [currentMonth, setCurrentMonth] = useState(new Date().toLocaleString('default', { month: 'long', year: 'numeric' }));
     const [showAssignModal, setShowAssignModal] = useState(false);
     const [selectedShift, setSelectedShift] = useState(null);
     const [syncEnabled, setSyncEnabled] = useState(true);
@@ -85,20 +71,33 @@ export function Attendance() {
     const [leaveType, setLeaveType] = useState('Annual Leave');
     const [leaveFilter, setLeaveFilter] = useState('ALL');
     const [activeMenuId, setActiveMenuId] = useState(null);
-    const [leaveRequests, setLeaveRequests] = useState([
-        { id: 1, name: 'John Doe', type: 'Sick Leave', range: 'Feb 18 - Feb 20', status: 'Approved', color: 'bg-emerald-50 text-emerald-600' },
-        { id: 2, name: 'Jane Smith', type: 'Annual Leave', range: 'Mar 05 - Mar 12', status: 'Pending', color: 'bg-amber-50 text-amber-600' },
-        { id: 3, name: 'Alex Johnson', type: 'Casual Leave', range: 'Feb 25', status: 'Pending', color: 'bg-amber-50 text-amber-600' },
-        { id: 4, name: 'Sarah Brown', type: 'Sick Leave', range: 'Feb 14 - Feb 15', status: 'Rejected', color: 'bg-red-50 text-red-600' },
-    ]);
+    const [leaveRequests, setLeaveRequests] = useState([]);
+    const [holidays, setHolidays] = useState([]);
+    const [shifts, setShifts] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
 
-    const employees = [
-        { id: 1, name: 'John Doe', role: 'Software Engineer' },
-        { id: 2, name: 'Jane Smith', role: 'Product Manager' },
-        { id: 3, name: 'Alex Johnson', role: 'UI/UX Designer' },
-        { id: 4, name: 'Sarah Brown', role: 'DevOps' },
-        { id: 5, name: 'Michael Lee', role: 'QA Lead' }
-    ];
+    // Derived data for visualizations
+    const shiftDistributionData = React.useMemo(() => {
+        const morning = shifts.filter(s => s.name?.toLowerCase().includes('morning') || s.name?.toLowerCase().includes('day')).length;
+        const evening = shifts.filter(s => s.name?.toLowerCase().includes('evening')).length;
+        const night = shifts.filter(s => s.name?.toLowerCase().includes('night')).length;
+
+        const data = [
+            { name: 'Morning', employees: morning, color: '#3b82f6' },
+            { name: 'Evening', employees: evening, color: '#8b5cf6' },
+            { name: 'Night', employees: night, color: '#6366f1' },
+        ];
+        return data; // Remove fallback
+    }, [shifts]);
+
+    const lateTrendData = React.useMemo(() => {
+        const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+        const data = days.map(day => ({
+            day,
+            count: attendance.filter(r => r.status === 'late' && new Date(r.date).toLocaleDateString('en-US', { weekday: 'short' }) === day).length
+        }));
+        return data;
+    }, [attendance]);
 
     // Shift Logic State
     const [scheduleData, setScheduleData] = useState({});
@@ -111,6 +110,28 @@ export function Attendance() {
     const [selectedDayReport, setSelectedDayReport] = useState(null);
     const [isExporting, setIsExporting] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
+
+    // Initial Data Fetch
+    useEffect(() => {
+        const fetchData = async () => {
+            setIsLoading(true);
+            try {
+                const [leaveRes, holidayRes, shiftRes] = await Promise.all([
+                    apiClient.get('/attendance/leaves'),
+                    apiClient.get('/attendance/holidays'),
+                    apiClient.get('/attendance/shifts')
+                ]);
+                if (leaveRes.success) setLeaveRequests(leaveRes.data);
+                if (holidayRes.success) setHolidays(holidayRes.data);
+                if (shiftRes.success) setShifts(shiftRes.data);
+            } catch (error) {
+                console.error("Failed to fetch attendance data", error);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchData();
+    }, []);
 
     const handleExport = async (type = 'Holiday') => {
         setIsExporting(true);
@@ -126,14 +147,11 @@ export function Attendance() {
             });
         } else if (type === 'Holiday') {
             csvContent += "Date,Holiday Name,Type,Status\n";
-            const holidays = [
-                { date: 'Jan 01', name: 'New Year Day', type: 'Public', status: 'Mandatory' },
-                { date: 'Jan 26', name: 'Republic Day', type: 'National', status: 'Mandatory' },
-                // ... logic can append more
-            ];
-            holidays.forEach(h => { csvContent += `${h.date},${h.name},${h.type},${h.status}\n`; });
+            holidays.forEach(h => {
+                csvContent += `${new Date(h.date).toLocaleDateString()},${h.name},${h.type || 'Public'},Mandatory\n`;
+            });
         } else {
-            csvContent += "Report,Value\nTotal Employees,124\nAvg Punctuality,94.2%\nActive Shifts,Morning\n";
+            csvContent += `Report,Value\nTotal Employees,${employees.length}\nAvg Punctuality,94.2%\nActive Shifts,${shifts[0]?.name || 'N/A'}\n`;
         }
 
         await new Promise(r => setTimeout(r, 1200));
@@ -154,13 +172,13 @@ export function Attendance() {
 
     const handleSync = async () => {
         setIsSyncing(true);
-        setPublishStatus('Authenticating with Google...');
-        await new Promise(r => setTimeout(r, 1000));
-        setPublishStatus('Syncing 14 Events to Calendar...');
-        await new Promise(r => setTimeout(r, 1500));
-        setIsSyncing(false);
-        setPublishStatus('Google Calendar Sync Complete');
-        setTimeout(() => setPublishStatus(''), 3000);
+        setPublishStatus('Syncing with Google Calendar...');
+        // In a real app, this would redirect to OAuth flow or trigger backend sync
+        addNotification("Google Calendar sync initiated.", "info");
+        setTimeout(() => {
+            setIsSyncing(false);
+            setPublishStatus('');
+        }, 1500);
     };
 
     const handleAutoAssign = () => {
@@ -168,7 +186,7 @@ export function Attendance() {
         employees.forEach(emp => {
             newSchedule[emp.id] = [0, 1, 2, 3, 4, 5, 6].map(dayIdx => {
                 if (dayIdx === 6) return 'OFF'; // Sunday Logic
-                const seed = (emp.id + dayIdx + Math.floor(Math.random() * 3)) % 3;
+                const seed = (emp.id + dayIdx) % 3;
                 return shifts[seed]?.name || 'Day Shift';
             });
         });
@@ -188,18 +206,8 @@ export function Attendance() {
         }
 
         setIsPublishing(true);
-        const steps = [
-            "Syncing with Attendance Server...",
-            "Notifying 124 Employees via Mobile App...",
-            "Sending Shift Emails...",
-            "Finalizing Live Schedule..."
-        ];
-
-        for (const step of steps) {
-            setPublishStatus(step);
-            await new Promise(r => setTimeout(r, 600));
-        }
-
+        setPublishStatus("Syncing with Attendance Server...");
+        // This is a placeholder for actual batch publishing logic
         setIsPublishing(false);
         setIsPublished(true);
         setPublishStatus('Success! Schedule is now Live.');
@@ -210,56 +218,83 @@ export function Attendance() {
         }, 5000);
     };
 
-    const cycleShift = (empId, dayIdx) => {
+    const cycleShift = async (empId, dayIdx) => {
         if (isPublished || isPublishing) return;
+
         const current = scheduleData[empId] ? [...scheduleData[empId]] : Array(7).fill('OFF');
         const shiftOptions = ['Day Shift', 'Evening Shift', 'Night Shift', 'OFF'];
         const nextIdx = (shiftOptions.indexOf(current[dayIdx]) + 1) % shiftOptions.length;
-        current[dayIdx] = shiftOptions[nextIdx];
+        const newShiftName = shiftOptions[nextIdx];
+
+        current[dayIdx] = newShiftName;
         setScheduleData({ ...scheduleData, [empId]: current });
+
+        // Simulating backend call for shift update
+        try {
+            if (newShiftName !== 'OFF') {
+                await apiClient.post('/attendance/shifts', {
+                    employeeId: empId,
+                    name: newShiftName,
+                    dayOfWeek: dayIdx,
+                    startTime: '08:00', // Default
+                    endTime: '16:00'
+                });
+            }
+        } catch (error) {
+            console.error("Failed to update shift", error);
+        }
     };
 
-    const handleUpdateStatus = (id, newStatus) => {
-        setLeaveRequests(prev => prev.map(req => {
-            if (req.id !== id) return req;
-            let color = "bg-slate-50 text-slate-600";
-            if (newStatus === 'Approved') color = "bg-emerald-50 text-emerald-600";
-            if (newStatus === 'Rejected') color = "bg-red-50 text-red-600";
-            if (newStatus === 'Pending') color = "bg-amber-50 text-amber-600";
-            return { ...req, status: newStatus, color };
-        }));
-        setActiveMenuId(null);
+    const handleUpdateStatus = async (id, newStatus) => {
+        try {
+            const response = await apiClient.patch(`/attendance/leaves/${id}/status`, { status: newStatus.toLowerCase() });
+            if (response.success) {
+                setLeaveRequests(prev => prev.map(req => req.id === id ? { ...req, ...response.data } : req));
+                setActiveMenuId(null);
+            }
+        } catch (error) {
+            console.error("Failed to update leave status", error);
+        }
     };
 
-    const handleDeleteRequest = (id) => {
-        setLeaveRequests(prev => prev.filter(req => req.id !== id));
-        setActiveMenuId(null);
+    const handleDeleteRequest = async (id) => {
+        try {
+            const response = await apiClient.delete(`/attendance/leaves/${id}`);
+            if (response.success) {
+                setLeaveRequests(prev => prev.filter(req => req.id !== id));
+                setActiveMenuId(null);
+            }
+        } catch (error) {
+            console.error("Failed to delete leave request", error);
+        }
     };
 
     const filteredRequests = leaveRequests.filter(req =>
         leaveFilter === 'ALL' || req.status.toUpperCase() === leaveFilter
     );
 
-    const handleSubmitLeave = (e) => {
+    const handleSubmitLeave = async (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
-        const startDate = formData.get('startDate');
-        const endDate = formData.get('endDate');
 
-        const selectedEmp = employees.find(emp => emp.name.toLowerCase() === empSearch.toLowerCase()) || employees[0];
+        try {
+            const payload = {
+                type: leaveType.toLowerCase().replace(' ', '_'),
+                startDate: formData.get('startDate'),
+                endDate: formData.get('endDate'),
+                reason: formData.get('reason'),
+                status: 'approved' // Admin bypasses approval flow
+            };
 
-        const newRequest = {
-            id: Date.now(),
-            name: selectedEmp.name,
-            type: leaveType,
-            range: startDate === endDate ? startDate : `${startDate} - ${endDate}`,
-            status: 'Approved', // Admins assign, so it's auto-approved
-            color: 'bg-emerald-50 text-emerald-600'
-        };
-
-        setLeaveRequests([newRequest, ...leaveRequests]);
-        setShowLeaveModal(false);
-        setEmpSearch('');
+            const response = await apiClient.post('/attendance/leaves', payload);
+            if (response.success) {
+                setLeaveRequests([response.data, ...leaveRequests]);
+                setShowLeaveModal(false);
+                setEmpSearch('');
+            }
+        } catch (error) {
+            console.error("Failed to submit leave", error);
+        }
     };
 
     const generateHeatmapData = () => {
@@ -268,13 +303,29 @@ export function Attendance() {
         const data = [];
         for (let w = 0; w < weeks; w++) {
             for (let d = 0; d < days; d++) {
-                const intensity = Math.floor(Math.random() * 4);
+                const dayIndex = w * 7 + d;
+                const record = attendance[dayIndex % (attendance.length || 1)];
+                const intensity = record ? (record.status === 'present' ? 3 : 1) : 0;
                 data.push({ w, d, intensity });
             }
         }
         return data;
     };
-    const heatmapData = generateHeatmapData();
+    const heatmapData = React.useMemo(() => generateHeatmapData(), [attendance]);
+
+    const leaveSummary = {
+        total: leaveRequests.length,
+        approved: leaveRequests.filter(r => r.status === 'approved').length,
+        pending: leaveRequests.filter(r => r.status === 'pending').length,
+        available: 15 // Average balance placeholder or could be derived
+    };
+
+    const onLeaveToday = leaveRequests.filter(req => {
+        const today = new Date().toISOString().split('T')[0];
+        return req.status === 'approved' && today >= req.startDate && today <= req.endDate;
+    }).length;
+
+    const pendingLeaves = leaveRequests.filter(req => req.status === 'pending').length;
 
     return (
         <div className="space-y-6 pb-20">
@@ -283,7 +334,9 @@ export function Attendance() {
                 <div>
                     <div className="flex items-center gap-2 mb-1">
                         <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white">Attendance & Leave</h1>
-                        <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700 text-xs font-bold border border-emerald-200">98% Presence</span>
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700 text-xs font-bold border border-emerald-200">
+                            {attendance.length > 0 ? `${Math.round((attendance.filter(r => r.status === 'present').length / attendance.length) * 100)}%` : '100%'} Presence
+                        </span>
                     </div>
                     <p className="text-lg text-slate-500 dark:text-slate-400 font-medium">Manage workforce presence, shifts, and time-off requests.</p>
                 </div>
@@ -307,10 +360,35 @@ export function Attendance() {
 
             {/* Stats */}
             <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 animate-slide-up">
-                <StatCard title="Avg. Punctuality" value="94.2%" icon={Clock} color="bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20" subValue="+2.1%" trend="up" />
-                <StatCard title="Late Arrivals" value="03" icon={AlertCircle} color="bg-amber-50 text-amber-600 dark:bg-amber-900/20" subValue="This Week" />
-                <StatCard title="Leave Balance" value={leaveSummary.available} icon={CalendarCheck} color="bg-blue-50 text-blue-600 dark:bg-blue-900/20" subValue="Days Avg" />
-                <StatCard title="Active Shift" value="Morning" icon={Coffee} color="bg-purple-50 text-purple-600 dark:bg-purple-900/20" subValue="ENDS 18:00" />
+                <StatCard
+                    title="Avg. Punctuality"
+                    value={`${Math.round((attendance.filter(r => r.status === 'present').length / (attendance.length || 1)) * 100)}%`}
+                    icon={Clock}
+                    color="bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20"
+                    subValue="Live"
+                    trend="up"
+                />
+                <StatCard
+                    title="Late Arrivals"
+                    value={String(attendance.filter(r => r.status === 'late').length).padStart(2, '0')}
+                    icon={AlertCircle}
+                    color="bg-amber-50 text-amber-600 dark:bg-amber-900/20"
+                    subValue="Total"
+                />
+                <StatCard
+                    title="Leave Balance"
+                    value={leaveSummary.available}
+                    icon={CalendarCheck}
+                    color="bg-blue-50 text-blue-600 dark:bg-blue-900/20"
+                    subValue="Days Avg"
+                />
+                <StatCard
+                    title="Active Shift"
+                    value={shifts.find(s => s.status === 'active')?.name || "N/A"}
+                    icon={Coffee}
+                    color="bg-purple-50 text-purple-600 dark:bg-purple-900/20"
+                    subValue="Live"
+                />
             </div>
 
             {/* Request Leave Modal */}
@@ -476,14 +554,14 @@ export function Attendance() {
                                     const month = currentDate.getMonth();
                                     const daysInMonth = new Date(year, month + 1, 0).getDate();
                                     const firstDayOfMonth = new Date(year, month, 1).getDay();
-                                    const today = new Date('2026-02-16'); // Hardcoded 'today' for demo logic transparency
+                                    const today = new Date();
 
-                                    // Mock Holidays Data Map
-                                    const holidaysMap = {
-                                        '2026-02-15': { name: 'Maha Shivratri', type: 'Religious' },
-                                        '2026-01-26': { name: 'Republic Day', type: 'National' },
-                                        // Add more as needed matching the Holiday List
-                                    };
+                                    // Use holidays from state
+                                    const holidaysMap = {};
+                                    holidays.forEach(h => {
+                                        const d = new Date(h.date).toISOString().split('T')[0];
+                                        holidaysMap[d] = { name: h.name, type: 'Public' };
+                                    });
 
                                     return [...Array(daysInMonth + firstDayOfMonth)].map((_, i) => {
                                         if (i < firstDayOfMonth) return <div key={`empty-${i}`} className="bg-white dark:bg-slate-900/50"></div>;
@@ -497,11 +575,11 @@ export function Attendance() {
                                         const isFuture = currentDayDate > today;
                                         const isToday = currentDayDate.toDateString() === today.toDateString();
 
-                                        // Mock Stats
-                                        const totalEmployees = 124;
-                                        const absent = (isWeekend || isHoliday || isFuture) ? 0 : Math.floor(Math.random() * 8);
-                                        const late = (isWeekend || isHoliday || isFuture) ? 0 : Math.floor(Math.random() * 12);
-                                        const present = (isWeekend || isHoliday || isFuture) ? 0 : totalEmployees - absent;
+                                        const totalEmployees = employees.length || 0;
+                                        const dayRecords = attendance.filter(r => r.date === dateString);
+                                        const present = dayRecords.filter(r => r.status === 'present').length;
+                                        const late = dayRecords.filter(r => r.status === 'late').length;
+                                        const absent = (isWeekend || isHoliday || isFuture) ? 0 : Math.max(0, totalEmployees - present - late);
 
                                         return (
                                             <div
@@ -591,14 +669,10 @@ export function Attendance() {
                             </div>
                             <div className="h-[200px] w-full">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <ComposedChart data={[
-                                        { day: 'Mon', late: 12, overtime: 1.5 },
-                                        { day: 'Tue', late: 8, overtime: 2.2 },
-                                        { day: 'Wed', late: 5, overtime: 3.0 },
-                                        { day: 'Thu', late: 9, overtime: 1.8 },
-                                        { day: 'Fri', late: 15, overtime: 0.5 },
-                                        { day: 'Sat', late: 4, overtime: 4.5 },
-                                    ]}>
+                                    <ComposedChart data={lateTrendData.map((d, idx) => ({
+                                        ...d,
+                                        overtime: (attendance.filter(r => r.overtimeHours && new Date(r.date).toLocaleDateString('en-US', { weekday: 'short' }) === d.day).reduce((acc, curr) => acc + curr.overtimeHours, 0) / (employees.length || 1)).toFixed(1)
+                                    }))}>
                                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                                         <XAxis dataKey="day" axisLine={false} tickLine={false} fontSize={12} stroke="#94a3b8" fontWeight={600} />
                                         <Tooltip
@@ -979,7 +1053,10 @@ export function Attendance() {
                                 <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 flex items-center justify-between group cursor-pointer hover:border-slate-300 transition-all">
                                     <div>
                                         <p className="text-[10px] font-black uppercase text-slate-400 mb-1">On Leave Today</p>
-                                        <p className="text-2xl font-black text-slate-900 dark:text-white">06 <span className="text-sm font-bold text-slate-400">/ 124</span></p>
+                                        <p className="text-2xl font-black text-slate-900 dark:text-white">
+                                            {String(onLeaveToday).padStart(2, '0')}
+                                            <span className="text-sm font-bold text-slate-400">/ {employees.length}</span>
+                                        </p>
                                     </div>
                                     <div className="h-10 w-10 rounded-xl bg-white dark:bg-slate-800 shadow-sm flex items-center justify-center text-slate-300 group-hover:text-primary-600 transition-colors">
                                         <UserMinus size={20} />
@@ -989,7 +1066,10 @@ export function Attendance() {
                                 <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/20 flex items-center justify-between group cursor-pointer hover:border-amber-300 transition-all" onClick={() => setLeaveFilter('PENDING')}>
                                     <div>
                                         <p className="text-[10px] font-black uppercase text-amber-600/70 mb-1">Pending Requests</p>
-                                        <p className="text-2xl font-black text-amber-700 dark:text-amber-500">04 <span className="text-[10px] font-bold bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-md ml-1">ACTION</span></p>
+                                        <p className="text-2xl font-black text-amber-700 dark:text-amber-500">
+                                            {String(pendingLeaves).padStart(2, '0')}
+                                            {pendingLeaves > 0 && <span className="text-[10px] font-bold bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-md ml-1">ACTION</span>}
+                                        </p>
                                     </div>
                                     <div className="h-10 w-10 rounded-xl bg-white/50 dark:bg-amber-900/20 flex items-center justify-center text-amber-600 group-hover:scale-110 transition-transform">
                                         <AlertCircle size={20} />
@@ -1131,18 +1211,24 @@ export function Attendance() {
                         {/* Summary & Controls */}
                         <div className="lg:col-span-1 space-y-6">
                             <div className="rounded-[2rem] border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900 shadow-sm">
-                                <h3 className="text-lg font-bold mb-4">Holiday Calendar 2026</h3>
+                                <h3 className="text-lg font-bold mb-4">Holiday Calendar {new Date().getFullYear()}</h3>
                                 <p className="text-sm text-slate-500 mb-6">Overview of corporate and public holidays for the current fiscal year.</p>
 
                                 <div className="space-y-4">
                                     <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
                                         <p className="text-[10px] font-black uppercase text-slate-400 mb-1">Total Holidays</p>
-                                        <p className="text-2xl font-black text-slate-900 dark:text-white">14 Days</p>
+                                        <p className="text-2xl font-black text-slate-900 dark:text-white">{holidays.length} Days</p>
                                     </div>
                                     <div className="p-4 rounded-2xl bg-primary-50 dark:bg-primary-900/10 border border-primary-100 dark:border-primary-900/20">
-                                        <p className="text-[10px] font-black uppercase text-primary-600 mb-1">Next Holiday In</p>
-                                        <p className="text-2xl font-black text-primary-700 dark:text-primary-300">12 Days</p>
-                                        <p className="text-xs font-bold text-primary-600 mt-1">Maha Shivratri (Observed)</p>
+                                        <p className="text-[10px] font-black uppercase text-primary-600 mb-1">Next Holiday</p>
+                                        {holidays.filter(h => new Date(h.date) > new Date())[0] ? (
+                                            <>
+                                                <p className="text-2xl font-black text-primary-700 dark:text-primary-300">
+                                                    {new Date(holidays.filter(h => new Date(h.date) > new Date())[0].date).toLocaleDateString()}
+                                                </p>
+                                                <p className="text-xs font-bold text-primary-600 mt-1">{holidays.filter(h => new Date(h.date) > new Date())[0].name}</p>
+                                            </>
+                                        ) : <p className="text-xl font-black text-primary-700 dark:text-primary-300">No upcoming holidays</p>}
                                     </div>
                                 </div>
 
@@ -1169,22 +1255,7 @@ export function Attendance() {
 
                         {/* Holiday List Grid */}
                         <div className="lg:col-span-2 space-y-4">
-                            {[
-                                { date: 'Jan 01', name: 'New Year Day', type: 'Public', status: 'Mandatory', color: 'bg-emerald-500' },
-                                { date: 'Jan 14', name: 'Makar Sankranti', type: 'Public', status: 'Optional', color: 'bg-orange-500' },
-                                { date: 'Jan 26', name: 'Republic Day', type: 'National', status: 'Mandatory', color: 'bg-primary-500' },
-                                { date: 'Feb 15', name: 'Maha Shivratri', type: 'Religious', status: 'Mandatory', color: 'bg-indigo-500' },
-                                { date: 'Mar 04', name: 'Holi Festival', type: 'Religious', status: 'Mandatory', color: 'bg-pink-500' },
-                                { date: 'Mar 20', name: 'Eid ul-Fitr', type: 'Religious', status: 'Mandatory', color: 'bg-emerald-500' },
-                                { date: 'Apr 03', name: 'Good Friday', type: 'Religious', status: 'Optional', color: 'bg-slate-400' },
-                                { date: 'Apr 14', name: 'Dr. Ambedkar Jayanti', type: 'National', status: 'Mandatory', color: 'bg-blue-500' },
-                                { date: 'Aug 15', name: 'Independence Day', type: 'National', status: 'Mandatory', color: 'bg-orange-500' },
-                                { date: 'Sep 15', name: 'Ganesh Chaturthi', type: 'Religious', status: 'Optional', color: 'bg-amber-500' },
-                                { date: 'Oct 02', name: 'Gandhi Jayanti', type: 'National', status: 'Mandatory', color: 'bg-slate-600' },
-                                { date: 'Oct 20', name: 'Dussehra', type: 'Religious', status: 'Mandatory', color: 'bg-red-500' },
-                                { date: 'Nov 08', name: 'Diwali', type: 'Religious', status: 'Mandatory', color: 'bg-amber-500' },
-                                { date: 'Dec 25', name: 'Christmas', type: 'Religious', status: 'Optional', color: 'bg-slate-400' },
-                            ].map((holiday, idx) => (
+                            {holidays.map((holiday, idx) => (
                                 <div
                                     key={idx}
                                     className="p-4 rounded-[1.5rem] bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 flex items-center justify-between hover:shadow-md transition-all group animate-slide-up"
@@ -1192,18 +1263,19 @@ export function Attendance() {
                                 >
                                     <div className="flex items-center gap-4">
                                         <div className="flex flex-col items-center justify-center h-14 w-14 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700">
-                                            <span className="text-[10px] font-black uppercase text-slate-400">{holiday.date.split(' ')[0]}</span>
-                                            <span className="text-lg font-black text-slate-900 dark:text-white leading-none">{holiday.date.split(' ')[1]}</span>
+                                            <span className="text-[10px] font-black uppercase text-slate-400">
+                                                {new Date(holiday.date).toLocaleString('default', { month: 'short' })}
+                                            </span>
+                                            <span className="text-lg font-black text-slate-900 dark:text-white leading-none">
+                                                {new Date(holiday.date).getDate()}
+                                            </span>
                                         </div>
                                         <div>
                                             <h4 className="text-sm font-bold text-slate-900 dark:text-white">{holiday.name}</h4>
                                             <div className="flex gap-2 mt-1">
                                                 <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-md">{holiday.type}</span>
-                                                <span className={cn(
-                                                    "text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md",
-                                                    holiday.status === 'Mandatory' ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"
-                                                )}>
-                                                    {holiday.status}
+                                                <span className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-600">
+                                                    Mandatory
                                                 </span>
                                             </div>
                                         </div>
@@ -1213,6 +1285,9 @@ export function Attendance() {
                                     </button>
                                 </div>
                             ))}
+                            {holidays.length === 0 && (
+                                <div className="p-12 text-center text-slate-400 italic">No holidays defined for this year.</div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -1237,8 +1312,8 @@ export function Attendance() {
                             </div>
 
                             <img
-                                src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=KiaanAttendanceID_12345&bgcolor=f8fafc&color=0f172a"
-                                alt="Large QR Code"
+                                src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=AttendanceID_${auth.getUser()?.id || 'GUEST'}&bgcolor=f8fafc&color=0f172a`}
+                                alt="Dynamic QR Code"
                                 className="w-full h-full object-contain"
                             />
                         </div>
@@ -1261,7 +1336,7 @@ export function Attendance() {
                                 }}
                                 className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98]"
                             >
-                                Simulate Scan
+                                Mark Presence
                             </button>
 
                             <div className="grid grid-cols-2 gap-2">

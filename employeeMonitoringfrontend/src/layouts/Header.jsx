@@ -1,58 +1,28 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sun, Moon, Bell, UserCircle, Menu, LogOut, CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
+import { Sun, Moon, Bell, LogOut, CheckCircle2, AlertCircle, Info, Menu, UserCircle, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useTheme } from '../hooks/useTheme';
 import { auth } from '../hooks/auth';
-
-const MOCK_NOTIFICATIONS = [
-    {
-        id: 1,
-        title: 'High Activity Detected',
-        description: 'John Doe has exceeded 90% activity threshold.',
-        time: '2 mins ago',
-        type: 'alert',
-        unread: true
-    },
-    {
-        id: 2,
-        title: 'Payroll Generated',
-        description: 'Monthly payroll for January has been processed.',
-        time: '1 hour ago',
-        type: 'success',
-        unread: true
-    },
-    {
-        id: 3,
-        title: 'New Policy Update',
-        description: 'The attendance policy has been updated.',
-        time: '3 hours ago',
-        type: 'info',
-        unread: false
-    }
-];
-
 import { useRealTime } from '../hooks/RealTimeContext';
 
 export function Header({ onMenuClick }) {
     const { theme, toggleTheme } = useTheme();
     const navigate = useNavigate();
     const user = auth.getUser();
-    const { notifications: liveNotifications } = useRealTime();
+
+    // Explicitly destructure from useRealTime to ensure it's defined
+    const realTimeProps = useRealTime();
+    const {
+        notifications = [],
+        markNotificationAsRead = () => { },
+        markAllNotificationsRead = () => { }
+    } = realTimeProps || {};
+
     const [showNotifications, setShowNotifications] = useState(false);
-    const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS);
     const notificationRef = useRef(null);
 
-    useEffect(() => {
-        // Merge initial mock notifications with live ones
-        setNotifications(prev => {
-            const merged = [...liveNotifications, ...prev];
-            // Remove duplicates by ID
-            return merged.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i).slice(0, 10);
-        });
-    }, [liveNotifications]);
-
-    const unreadCount = notifications.filter(n => n.unread).length;
+    const unreadCount = (notifications || []).filter(n => n.unread).length;
 
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -69,8 +39,12 @@ export function Header({ onMenuClick }) {
         navigate('/login', { replace: true });
     };
 
-    const markAllRead = () => {
-        setNotifications(notifications.map(n => ({ ...n, unread: false })));
+    const handleMarkAllRead = async () => {
+        if (markAllNotificationsRead) await markAllNotificationsRead();
+    };
+
+    const handleNotificationClick = async (id) => {
+        if (markNotificationAsRead) await markNotificationAsRead(id);
     };
 
     return (
@@ -114,7 +88,7 @@ export function Header({ onMenuClick }) {
                             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
                                 <h3 className="text-sm font-bold dark:text-white">Notifications</h3>
                                 <button
-                                    onClick={markAllRead}
+                                    onClick={handleMarkAllRead}
                                     className="text-xs font-semibold text-primary-600 hover:text-primary-700"
                                 >
                                     Mark all as read
@@ -125,6 +99,7 @@ export function Header({ onMenuClick }) {
                                     notifications.map((n) => (
                                         <div
                                             key={n.id}
+                                            onClick={() => handleNotificationClick(n.id)}
                                             className={clsx(
                                                 "group relative flex gap-3 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer",
                                                 n.unread && "bg-primary-50/30 dark:bg-primary-900/10"
@@ -147,13 +122,13 @@ export function Header({ onMenuClick }) {
                                                     </p>
                                                     {n.unread && <span className="h-1.5 w-1.5 rounded-full bg-primary-500 mt-1.5"></span>}
                                                 </div>
-                                                <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">{n.description}</p>
+                                                <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">{n.description || n.message}</p>
                                                 <p className="mt-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-tight">{n.time}</p>
                                             </div>
                                         </div>
                                     ))
                                 ) : (
-                                    <div className="px-4 py-8 text-center text-slate-400">
+                                    <div className="px-4 py-8 text-center text-slate-400 text-xs">
                                         No new notifications
                                     </div>
                                 )}
@@ -173,7 +148,7 @@ export function Header({ onMenuClick }) {
                     )}
                 </div>
 
-                <div className="h-6 w-px bg-slate-200 dark:bg-slate-700"></div>
+                <div className="h-6 w-px bg-slate-200 dark:bg-slate-700 mx-1"></div>
 
                 <div className="flex items-center gap-3">
                     <button className="flex items-center gap-2 rounded-lg p-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
@@ -181,8 +156,8 @@ export function Header({ onMenuClick }) {
                             <UserCircle size={24} />
                         </div>
                         <div className="hidden text-left md:block">
-                            <p className="text-sm font-semibold dark:text-slate-100">{user?.name || 'User'}</p>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">{user?.role || 'Member'}</p>
+                            <p className="text-sm font-semibold dark:text-white">{user?.name || 'User'}</p>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mt-0.5">{user?.role || 'Member'}</p>
                         </div>
                     </button>
                     <button

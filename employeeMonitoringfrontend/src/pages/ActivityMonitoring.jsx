@@ -1,87 +1,139 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
-    Monitor,
-    Globe,
-    Zap,
-    Lock,
-    Shield,
-    Layout,
-    Clock,
-    Smartphone,
-    BarChart2,
     CheckCircle2,
-    X,
-    Filter
+    Monitor,
+    Zap,
+    Globe,
+    X
 } from 'lucide-react';
-import { clsx } from 'clsx';
-import { twMerge } from 'tailwind-merge';
 import {
     PieChart,
     Pie,
     Cell,
-    ResponsiveContainer,
     Tooltip,
+    ResponsiveContainer,
     BarChart,
-    Bar,
+    CartesianGrid,
     XAxis,
     YAxis,
-    CartesianGrid,
+    Bar,
     AreaChart,
-    Area,
-    Treemap
+    Area
 } from 'recharts';
-import { topApps, topWebsites } from '../data/mockData';
 import { useRealTime } from '../hooks/RealTimeContext';
-
-const cn = (...inputs) => twMerge(clsx(inputs));
+import { cn } from '../utils/cn';
 
 const UsageItem = ({ icon: Icon, name, time, percent, color, category }) => (
-    <div className="flex items-center gap-4 py-3 border-b border-slate-100 dark:border-slate-800 last:border-0 group hover:bg-slate-50 dark:hover:bg-slate-800/50 -mx-4 px-4 transition-colors">
-        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-50 dark:bg-slate-800 ${color} group-hover:scale-110 transition-transform`}>
-            <Icon size={20} />
+    <div className="flex items-center justify-between p-3 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+        <div className="flex items-center gap-3">
+            <div className={cn("p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm transition-transform group-hover:scale-110", color)}>
+                <Icon size={18} />
+            </div>
+            <div>
+                <p className="text-sm font-bold text-slate-700 dark:text-slate-200">{name}</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{category}</p>
+            </div>
         </div>
-        <div className="flex-1 min-w-0">
-            <div className="flex justify-between">
-                <p className="text-sm font-semibold truncate dark:text-slate-200">{name}</p>
-                <p className="text-sm font-bold">{percent}%</p>
-            </div>
-            <div className="flex justify-between text-xs text-slate-500 mt-0.5">
-                <span>{category}</span>
-                <span>{time}</span>
-            </div>
-            <div className="mt-2 h-1.5 w-full bg-slate-100 rounded-full dark:bg-slate-800 overflow-hidden">
-                <div className={`h-full rounded-full ${color.replace('text-', 'bg-')}`} style={{ width: `${percent}%` }}></div>
+        <div className="text-right">
+            <p className="text-sm font-black text-slate-900 dark:text-white">{time}</p>
+            <div className="flex items-center gap-1.5 mt-0.5">
+                <div className="h-1 w-12 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                    <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${percent}%` }}></div>
+                </div>
+                <span className="text-[10px] font-bold text-slate-400">{percent}%</span>
             </div>
         </div>
     </div>
 );
 
 export function ActivityMonitoring() {
-    const { stats } = useRealTime();
+    const {
+        activityStats,
+        fetchActivityStats,
+        isLoading,
+        addNotification
+    } = useRealTime();
+
     const [privacyMode, setPrivacyMode] = useState(true);
     const [showToast, setShowToast] = useState(false);
     const [showAppsModal, setShowAppsModal] = useState(false);
     const [showWebsitesModal, setShowWebsitesModal] = useState(false);
+    const [selectedDate, setSelectedDate] = useState(new Date());
 
-    // Mock data derived for visualization
-    const productivityData = [
-        { name: 'Productive', value: 65, color: '#10b981' },
-        { name: 'Neutral', value: 20, color: '#f59e0b' },
-        { name: 'Distracting', value: 15, color: '#ef4444' },
-    ];
+    useEffect(() => {
+        fetchActivityStats(selectedDate);
+    }, [selectedDate, fetchActivityStats]);
 
-    const categoryData = [
-        { name: 'Development', value: 45, color: '#3b82f6' },
-        { name: 'Communication', value: 25, color: '#8b5cf6' },
-        { name: 'Design', value: 20, color: '#ec4899' },
-        { name: 'Browsing', value: 10, color: '#64748b' },
-    ];
+    const activityLog = activityStats.summary;
+    const apps = activityStats.apps;
+    const websites = activityStats.websites;
+
+    // Data derivation for visualization
+    const productivityData = useMemo(() => {
+        const score = activityLog?.productivityScore || 0;
+        return [
+            { name: 'Productive', value: score, color: '#10b981' },
+            { name: 'Neutral', value: Math.max(0, 100 - score - 15), color: '#f59e0b' },
+            { name: 'Distracting', value: 15, color: '#ef4444' }, // Simplified
+        ];
+    }, [activityLog]);
+
+    const activeInactiveData = useMemo(() => {
+        const active = activityLog?.activeSeconds || 0;
+        const idle = activityLog?.idleSeconds || 0;
+        const total = (active + idle) || 1;
+        return [
+            { name: 'Active', value: Math.round((active / total) * 100), color: '#3b82f6' },
+            { name: 'Inactive', value: Math.max(0, 100 - Math.round((active / total) * 100)), color: '#e2e8f0' }
+        ];
+    }, [activityLog]);
+
+    const categoryData = useMemo(() => {
+        const cats = {};
+        apps.forEach(app => {
+            cats[app.category] = (cats[app.category] || 0) + (app.usageSeconds || 0);
+        });
+        const data = Object.entries(cats).map(([name, value], i) => ({
+            name,
+            value: Math.round(value / 60), // in minutes
+            color: ['#3b82f6', '#8b5cf6', '#ec4899', '#64748b'][i % 4]
+        })).sort((a, b) => b.value - a.value);
+
+        return data.length > 0 ? data : [{ name: 'N/A', value: 0, color: '#e2e8f0' }];
+    }, [apps]);
+
+    const pulseData = useMemo(() => {
+        if (!activityLog?.hourlyData) {
+            // Placeholder/Empty state for pulse
+            return [
+                { time: '9am', intensity: 0 },
+                { time: '12pm', intensity: 0 },
+                { time: '3pm', intensity: 0 },
+                { time: '6pm', intensity: 0 }
+            ];
+        }
+        return Object.entries(activityLog.hourlyData).map(([hour, intensity]) => ({
+            time: parseInt(hour) > 12 ? `${parseInt(hour) - 12}pm` : `${hour}${parseInt(hour) === 12 ? 'pm' : 'am'}`,
+            intensity
+        }));
+    }, [activityLog]);
 
     const togglePrivacy = () => {
         setPrivacyMode(!privacyMode);
         setShowToast(true);
         setTimeout(() => setShowToast(false), 3000);
     };
+
+    if (isLoading && !activityLog) {
+        return (
+            <div className="flex h-[60vh] items-center justify-center">
+                <div className="space-y-4 text-center">
+                    <div className="h-12 w-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto" />
+                    <p className="text-sm font-bold text-slate-500 animate-pulse">Analyzing digital footprint...</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6 pb-20">
@@ -98,6 +150,11 @@ export function ActivityMonitoring() {
                     <p className="text-lg text-slate-500 dark:text-slate-400 font-medium">Detailed breakdown of digital footprint & efficiency.</p>
                 </div>
                 <div className="flex items-center justify-end gap-4">
+                    <div className="flex items-center gap-2 bg-white dark:bg-slate-900 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <button onClick={() => setSelectedDate(new Date(selectedDate.setDate(selectedDate.getDate() - 1)))} className="p-1 hover:bg-slate-100 rounded-lg"><Monitor size={14} className="rotate-180" /></button>
+                        <span className="text-sm font-bold text-slate-700">{selectedDate.toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
+                        <button onClick={() => setSelectedDate(new Date(selectedDate.setDate(selectedDate.getDate() + 1)))} className="p-1 hover:bg-slate-100 rounded-lg"><Monitor size={14} /></button>
+                    </div>
                     <div className="flex items-center gap-3 bg-white dark:bg-slate-900 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
                         <span className="text-sm font-bold text-slate-500 uppercase tracking-wider">Privacy Mode</span>
                         <button
@@ -147,7 +204,7 @@ export function ActivityMonitoring() {
                             </ResponsiveContainer>
                         </div>
                         <div className="absolute flex flex-col items-center">
-                            <span className="text-4xl font-black text-slate-900 dark:text-white">82</span>
+                            <span className="text-4xl font-black text-slate-900 dark:text-white">{activityLog?.productivityScore || 0}</span>
                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Score</span>
                         </div>
                     </div>
@@ -172,10 +229,7 @@ export function ActivityMonitoring() {
                             <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
                                     <Pie
-                                        data={[
-                                            { name: 'Active', value: 78, color: '#3b82f6' },
-                                            { name: 'Inactive', value: 22, color: '#e2e8f0' }
-                                        ]}
+                                        data={activeInactiveData}
                                         innerRadius={60}
                                         outerRadius={80}
                                         startAngle={90}
@@ -193,7 +247,7 @@ export function ActivityMonitoring() {
                             </ResponsiveContainer>
                         </div>
                         <div className="absolute flex flex-col items-center">
-                            <span className="text-4xl font-black text-blue-600">78%</span>
+                            <span className="text-4xl font-black text-blue-600">{activeInactiveData[0].value}%</span>
                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Active</span>
                         </div>
                     </div>
@@ -201,11 +255,15 @@ export function ActivityMonitoring() {
                     <div className="mt-6 grid grid-cols-2 gap-4">
                         <div className="p-3 rounded-2xl bg-blue-50 dark:bg-blue-900/20 text-center">
                             <p className="text-[9px] font-bold text-blue-600 uppercase mb-1">Active Time</p>
-                            <p className="text-base font-black text-blue-700 dark:text-blue-300">6h 12m</p>
+                            <p className="text-base font-black text-blue-700 dark:text-blue-300">
+                                {Math.floor((activityLog?.activeSeconds || 0) / 3600)}h {Math.floor(((activityLog?.activeSeconds || 0) % 3600) / 60)}m
+                            </p>
                         </div>
                         <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 text-center">
                             <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Idle Time</p>
-                            <p className="text-base font-black text-slate-600 dark:text-slate-300">1h 48m</p>
+                            <p className="text-base font-black text-slate-600 dark:text-slate-300">
+                                {Math.floor((activityLog?.idleSeconds || 0) / 3600)}h {Math.floor(((activityLog?.idleSeconds || 0) % 3600) / 60)}m
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -245,16 +303,7 @@ export function ActivityMonitoring() {
                     </div>
                     <div className="h-[200px] w-full mt-auto">
                         <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={[
-                                { time: '9am', intensity: 30 },
-                                { time: '10am', intensity: 50 },
-                                { time: '11am', intensity: 85 },
-                                { time: '12pm', intensity: 60 },
-                                { time: '1pm', intensity: 40 },
-                                { time: '2pm', intensity: 70 },
-                                { time: '3pm', intensity: 80 },
-                                { time: '4pm', intensity: 55 },
-                            ]}>
+                            <AreaChart data={pulseData}>
                                 <defs>
                                     <linearGradient id="colorIntensity" x1="0" y1="0" x2="0" y2="1">
                                         <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
@@ -292,14 +341,14 @@ export function ActivityMonitoring() {
                         </button>
                     </div>
                     <div className="space-y-2">
-                        {topApps.slice(0, 4).map((app, i) => (
+                        {apps.slice(0, 4).map((app, i) => (
                             <UsageItem
                                 key={i}
-                                icon={app.icon === 'Monitor' ? Monitor : app.icon === 'Layout' ? Layout : app.icon === 'Zap' ? Zap : app.icon === 'Shield' ? Shield : Smartphone}
-                                name={app.name}
-                                time={app.time}
-                                percent={app.percent}
-                                color={app.color}
+                                icon={Monitor}
+                                name={app.appName}
+                                time={`${Math.floor(app.usageSeconds / 60)}m`}
+                                percent={app.usagePercent}
+                                color="text-blue-500"
                                 category={app.category}
                             />
                         ))}
@@ -326,14 +375,14 @@ export function ActivityMonitoring() {
                         </button>
                     </div>
                     <div className="space-y-2">
-                        {topWebsites.slice(0, 4).map((web, i) => (
+                        {websites.slice(0, 4).map((web, i) => (
                             <UsageItem
                                 key={i}
                                 icon={Globe}
-                                name={web.name}
-                                time={web.time}
-                                percent={web.percent}
-                                color={web.color}
+                                name={web.domain}
+                                time={`${Math.floor(web.usageSeconds / 60)}m`}
+                                percent={web.usagePercent}
+                                color="text-sky-500"
                                 category={web.category}
                             />
                         ))}
@@ -359,26 +408,26 @@ export function ActivityMonitoring() {
                             {/* Content */}
                             <div className="space-y-2">
                                 {showAppsModal ? (
-                                    topApps.map((app, i) => (
+                                    apps.map((app, i) => (
                                         <UsageItem
                                             key={i}
-                                            icon={app.icon === 'Monitor' ? Monitor : app.icon === 'Layout' ? Layout : app.icon === 'Zap' ? Zap : app.icon === 'Shield' ? Shield : Smartphone}
-                                            name={app.name}
-                                            time={app.time}
-                                            percent={app.percent}
-                                            color={app.color}
+                                            icon={Monitor}
+                                            name={app.appName}
+                                            time={`${Math.floor(app.usageSeconds / 60)}m`}
+                                            percent={app.usagePercent}
+                                            color="text-blue-500"
                                             category={app.category}
                                         />
                                     ))
                                 ) : (
-                                    topWebsites.map((web, i) => (
+                                    websites.map((web, i) => (
                                         <UsageItem
                                             key={i}
                                             icon={Globe}
-                                            name={web.name}
-                                            time={web.time}
-                                            percent={web.percent}
-                                            color={web.color}
+                                            name={web.domain}
+                                            time={`${Math.floor(web.usageSeconds / 60)}m`}
+                                            percent={web.usagePercent}
+                                            color="text-sky-500"
                                             category={web.category}
                                         />
                                     ))

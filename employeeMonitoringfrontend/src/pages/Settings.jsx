@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { auth } from '../hooks/auth';
+import { useRealTime } from '../hooks/RealTimeContext';
 
 const cn = (...inputs) => twMerge(clsx(inputs));
 
@@ -82,15 +84,18 @@ export function Settings() {
     const [activeModal, setActiveModal] = useState(null);
     const [showSaveToast, setShowSaveToast] = useState(false);
 
+    const { employees, projects } = useRealTime();
+    const user = auth.getUser();
+
     // --- Persisted Settings State ---
     const [settings, setSettings] = useState(() => {
         const saved = localStorage.getItem('app_settings');
-        return saved ? JSON.parse(saved) : {
-            company: { name: "Shoppeal Tech Private Limited", address: "Innovation Valley, CA 94043", country: "United States" },
+        return saved ? { ...JSON.parse(saved) } : {
+            company: { name: "Organization Hub", address: "System Default HQ", country: "Global" },
             monitoring: { interval: 10, idleThreshold: 5, enableBlur: true, geoFenceRange: 50 },
             notifications: { email: true, push: true, weekly: false },
             appearance: { theme: 'Dark', fontSize: 'Medium' },
-            billing: { plan: 'Enterprise', status: 'Active' }
+            billing: { plan: 'Premium', status: 'Active' }
         };
     });
 
@@ -300,11 +305,11 @@ export function Settings() {
                         <div className="relative z-10 flex gap-12">
                             <div>
                                 <p className="text-[9px] font-black text-slate-500 uppercase mb-1">Active Staff</p>
-                                <p className="text-xl font-bold">142 / 200</p>
+                                <p className="text-xl font-bold">{employees.length} / 200</p>
                             </div>
                             <div>
-                                <p className="text-[9px] font-black text-slate-500 uppercase mb-1">Next Bill</p>
-                                <p className="text-xl font-bold">Mar 15, 2026</p>
+                                <p className="text-[9px] font-black text-slate-500 uppercase mb-1">Projects</p>
+                                <p className="text-xl font-bold">{projects.length}</p>
                             </div>
                         </div>
                     </div>
@@ -485,19 +490,19 @@ export function Settings() {
                 <div className="space-y-6">
                     <div className="flex flex-col items-center p-6 pb-12">
                         <div className="h-24 w-24 rounded-[2rem] bg-gradient-to-br from-primary-500 to-indigo-600 flex items-center justify-center text-white text-3xl font-black shadow-2xl border-4 border-white dark:border-slate-900 mb-6 relative">
-                            JS
+                            {user?.name?.split(' ').map(n => n[0]).join('') || 'U'}
                             <button className="absolute -bottom-2 -right-2 h-10 w-10 rounded-2xl bg-white dark:bg-slate-800 text-slate-400 flex items-center justify-center shadow-lg border border-slate-100 dark:border-slate-700">
                                 <Palette size={16} />
                             </button>
                         </div>
-                        <h4 className="text-xl font-black text-slate-900 dark:text-white">Jane Smith</h4>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">Super Administrator</p>
+                        <h4 className="text-xl font-black text-slate-900 dark:text-white">{user?.name || 'User'}</h4>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">{user?.role || 'Member'}</p>
                     </div>
                     <div className="space-y-4">
                         <div>
                             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Primary Email</label>
                             <div className="flex items-center gap-4 px-6 h-14 rounded-2xl bg-slate-50 dark:bg-slate-800 text-slate-400 font-bold border border-slate-100 dark:border-slate-800">
-                                <Mail size={18} /> jane@shoppeal.tech
+                                <Mail size={18} /> {user?.email || 'user@system.com'}
                             </div>
                         </div>
                         <button className="w-full py-4 text-xs font-black text-rose-600 uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-2xl transition-all">

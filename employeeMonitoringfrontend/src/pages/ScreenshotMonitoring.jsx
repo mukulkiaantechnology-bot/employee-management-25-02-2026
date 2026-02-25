@@ -260,43 +260,21 @@ export function ScreenshotMonitoring() {
 
     // Detail View & Archive State
     const [selectedScreenshot, setSelectedScreenshot] = useState(null);
-    const [localScreenshots, setLocalScreenshots] = useState(() => {
-        const today = new Date();
-        const year = today.getFullYear();
-        const month = String(today.getMonth() + 1).padStart(2, '0');
-        const day = String(today.getDate()).padStart(2, '0');
-        const todayStr = `${year}-${month}-${day}`;
-
-        return [
-            { id: 1, time: '10:20 AM', date: todayStr, url: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=800', employee: 'Jane Smith', isBlurred: true, status: 'Idle', department: 'Design' },
-            { id: 2, time: '10:25 AM', date: todayStr, url: 'https://images.unsplash.com/photo-1497215728101-856f4ea42174?auto=format&fit=crop&q=80&w=800', employee: 'Alex Johnson', isBlurred: false, status: 'Active', department: 'Development' },
-            { id: 3, time: '10:30 AM', date: todayStr, url: 'https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&q=80&w=800', employee: ' Sarah Brown', isBlurred: false, status: 'Active', department: 'Management' },
-            { id: 4, time: '10:45 AM', date: todayStr, url: 'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?auto=format&fit=crop&q=80&w=800', employee: 'Jane Smith', isBlurred: false, status: 'Active', department: 'Design' },
-            { id: 5, time: '11:00 AM', date: todayStr, url: 'https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&q=80&w=800', employee: 'Alex Johnson', isBlurred: false, status: 'Active', department: 'Development' },
-            { id: 6, time: '11:15 AM', date: todayStr, url: 'https://images.unsplash.com/photo-1549692520-acc6669e2f0c?auto=format&fit=crop&q=80&w=800', employee: 'Sarah Brown', isBlurred: true, status: 'Idle', department: 'Management' },
-            { id: 7, time: '11:30 AM', date: todayStr, url: 'https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&q=80&w=800', employee: 'Mike Wilson', isBlurred: false, status: 'Active', department: 'Support' },
-            { id: 8, time: '11:45 AM', date: todayStr, url: 'https://images.unsplash.com/photo-1486312338219-ce68d2c6f44d?auto=format&fit=crop&q=80&w=800', employee: 'Jane Smith', isBlurred: false, status: 'Active', department: 'Design' },
-            { id: 9, time: '12:00 PM', date: todayStr, url: 'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?auto=format&fit=crop&q=80&w=800', employee: 'Alex Johnson', isBlurred: false, status: 'Active', department: 'Development' },
-        ];
-    });
     const [isLoadingArchive, setIsLoadingArchive] = useState(false);
 
     // 2. Filter & Derived Logic (Optimized with useMemo)
-    const uniqueEmployees = useMemo(() => ['All', ...new Set(localScreenshots.map(s => s.employee))], [localScreenshots]);
+    const uniqueEmployees = useMemo(() => ['All', ...new Set(screenshots.map(s => s.employeeName || s.employee?.name || 'Unknown'))], [screenshots]);
 
-    const filteredScreenshots = useMemo(() => localScreenshots.filter(s => {
-        const year = timelineDate.getFullYear();
-        const month = String(timelineDate.getMonth() + 1).padStart(2, '0');
-        const day = String(timelineDate.getDate()).padStart(2, '0');
-        const dateStr = `${year}-${month}-${day}`;
+    const filteredScreenshots = useMemo(() => screenshots.filter(s => {
+        const screenshotDate = new Date(s.timestamp || s.createdAt).toISOString().split('T')[0];
+        const targetDateStr = timelineDate.toISOString().split('T')[0];
 
-        if (s.date && s.date !== dateStr) return false;
-        if (selectedEmployee !== 'All' && s.employee !== selectedEmployee) return false;
-        if (activeFilter === 'Flagged' && !s.isBlurred) return false;
-        if (activeFilter === 'Idle' && s.status !== 'Idle') return false;
-        if (excludeSensitive && s.employee === 'John Doe') return false;
+        if (screenshotDate !== targetDateStr) return false;
+        if (selectedEmployee !== 'All' && (s.employeeName || s.employee?.name) !== selectedEmployee) return false;
+        if (activeFilter === 'Flagged' && !s.isBlurry) return false;
+        if (activeFilter === 'Idle' && s.employeeStatus !== 'Idle') return false;
         return true;
-    }), [localScreenshots, selectedEmployee, activeFilter, excludeSensitive, timelineDate]);
+    }), [screenshots, selectedEmployee, activeFilter, timelineDate]);
 
     const progress = useMemo(() =>
         filteredScreenshots.length > 0 ? ((playbackIndex + 1) / filteredScreenshots.length) * 100 : 0
@@ -337,27 +315,9 @@ export function ScreenshotMonitoring() {
     const handleLoadArchive = useCallback(async () => {
         if (isLoadingArchive) return;
         setIsLoadingArchive(true);
-        const delay = (ms) => new Promise(res => setTimeout(res, ms));
         try {
-            await delay(800);
-            const year = timelineDate.getFullYear();
-            const month = String(timelineDate.getMonth() + 1).padStart(2, '0');
-            const day = String(timelineDate.getDate()).padStart(2, '0');
-            const targetDateStr = `${year}-${month}-${day}`;
-
-            const batchSize = 10;
-            const archiveData = Array.from({ length: batchSize }).map((_, i) => ({
-                id: `arc-${Date.now()}-${i}`,
-                id_val: `arc-${Date.now()}-${i}`,
-                time: `${8 + Math.floor(i / 2)}:${(i % 2) * 30 + 10} AM`,
-                date: targetDateStr,
-                url: `https://picsum.photos/seed/${Math.random()}/800/450`,
-                employee: ['Sarah Brown', 'Alex Johnson', 'Mike Wilson', 'John Doe'][Math.floor(Math.random() * 4)],
-                isBlurred: Math.random() > 0.7,
-                status: Math.random() > 0.8 ? 'Idle' : 'Active',
-                department: 'Engineering'
-            }));
-            setLocalScreenshots(prev => [...archiveData, ...prev]);
+            // Real implementation would fetch next page or specific date
+            await apiClient.get(`/screenshots?date=${timelineDate.toISOString().split('T')[0]}`);
         } finally {
             setIsLoadingArchive(false);
         }
@@ -368,7 +328,7 @@ export function ScreenshotMonitoring() {
     }, [deleteScreenshot]);
 
     const handleDownload = useCallback((url) => {
-        alert("Downloading encrypted screenshot...");
+        window.open(url, '_blank');
     }, []);
 
     const handleViewScreenshot = useCallback((screenshot, index) => {
@@ -390,35 +350,15 @@ export function ScreenshotMonitoring() {
     const isToday = timelineDate.toDateString() === new Date().toDateString();
 
     // 4. Effects
-    // Auto-load data for new dates if none exists
+    // Auto-fetch data for new dates if needed can be implemented here via apiClient
     useEffect(() => {
-        const year = timelineDate.getFullYear();
-        const month = String(timelineDate.getMonth() + 1).padStart(2, '0');
-        const day = String(timelineDate.getDate()).padStart(2, '0');
-        const targetDate = `${year}-${month}-${day}`;
-
-        const hasData = localScreenshots.some(s => s.date === targetDate);
-        if (!hasData) {
-            const mockItems = Array.from({ length: 8 }).map((_, i) => ({
-                id: `auto-${targetDate}-${i}`,
-                id_val: `auto-${targetDate}-${i}`,
-                time: `${9 + Math.floor(i / 2)}:${(i % 2) * 30 + 15} AM`,
-                date: targetDate,
-                url: `https://images.unsplash.com/photo-${1517694712202 + i}-14dd9538aa97?auto=format&fit=crop&q=80&w=800`,
-                employee: ['Jane Smith', 'Sarah Brown', 'Alex Johnson', 'Mike Wilson'][i % 4],
-                isBlurred: Math.random() > 0.7,
-                status: 'Active',
-                department: 'Development'
-            }));
-            setLocalScreenshots(prev => [...prev, ...mockItems]);
-        }
-    }, [timelineDate]); // Only trigger on date change
+        // Triggered on timelineDate change
+        // Real implementation would fetch from API: apiClient.get(`/screenshots?date=${timelineDate}`)
+    }, [timelineDate]);
 
     useEffect(() => {
-        if (localScreenshots.length === 0 && screenshots.length > 0) {
-            setLocalScreenshots(screenshots);
-        }
-    }, [screenshots, localScreenshots.length]);
+        // Sync logic if needed
+    }, [screenshots]);
 
     useEffect(() => {
         const handleKeyDown = (e) => {
@@ -710,9 +650,13 @@ export function ScreenshotMonitoring() {
                 )}>
                     {filteredScreenshots.length > 0 ? (
                         filteredScreenshots.map((s, index) => (
-                            <div key={s.id || s.id_val} className={cn("transition-all duration-500", isPlaying && index === playbackIndex && viewMode === 'grid' ? "scale-105 ring-4 ring-amber-500/20 rounded-2xl z-10" : "")}>
+                            <div key={s.id} className={cn("transition-all duration-500", isPlaying && index === playbackIndex && viewMode === 'grid' ? "scale-105 ring-4 ring-amber-500/20 rounded-2xl z-10" : "")}>
                                 <ScreenshotCard
-                                    {...s}
+                                    id={s.id}
+                                    time={new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    url={s.imageUrl}
+                                    isBlurred={s.isBlurred}
+                                    employee={s.employeeName || s.employee?.name}
                                     viewMode={viewMode}
                                     globalBlur={globalBlur}
                                     onDelete={handleDelete}

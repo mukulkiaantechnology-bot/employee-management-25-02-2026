@@ -6,17 +6,11 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { useRealTime } from '../hooks/RealTimeContext';
+import { apiClient } from '../utils/apiClient';
 
 const cn = (...inputs) => twMerge(clsx(inputs));
 
-// --- Mock Initial Logs ---
-const initialAuditLogs = [
-    { id: 1, action: 'User Login', user: 'admin@shoppeal.tech', ip: '192.168.1.1', time: '2 mins ago', status: 'Success' },
-    { id: 2, action: 'Access Sensitive Document', user: 'manager_01', ip: '192.168.1.45', time: '15 mins ago', status: 'Warning' },
-    { id: 3, action: 'Updated Monitoring Policy', user: 'admin@shoppeal.tech', ip: '192.168.1.1', time: '1 hour ago', status: 'Success' },
-    { id: 4, action: 'Bulk Export Attempt', user: 'employee_test', ip: '45.12.89.2', time: '3 hours ago', status: 'Denied' },
-    { id: 5, action: 'System Backup Complete', user: 'System', ip: 'Local', time: '5 hours ago', status: 'Success' },
-];
 
 // --- Generic Modal Wrapper ---
 const Modal = ({ isOpen, onClose, title, icon: Icon, children }) => {
@@ -91,53 +85,25 @@ const ComplianceCard = ({ icon: Icon, title, description, badge, active, onSetti
 );
 
 export function Compliance() {
+    const {
+        auditLogs,
+        complianceStatus,
+        fetchAuditLogs,
+        fetchComplianceStatus,
+        broadcastConsent,
+        isLoading,
+        addNotification
+    } = useRealTime();
+
     const [searchQuery, setSearchQuery] = useState('');
     const [activeModal, setActiveModal] = useState(null);
-    const [showToast, setShowToast] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false);
 
-    // --- Live System State ---
-    const [complianceState, setComplianceState] = useState(() => {
-        const saved = localStorage.getItem('compliance_state');
-        return saved ? JSON.parse(saved) : {
-            encryptionActive: true,
-            twoFactorActive: false,
-            gdprRegionLock: true,
-            dataRetentionDays: 365,
-            consentStats: { accepted: 42, total: 45 },
-            roles: [
-                { id: 'admin', name: 'Administrator', perms: ['view', 'edit', 'export', 'manage'] },
-                { id: 'manager', name: 'Manager', perms: ['view', 'export'] },
-                { id: 'employee', name: 'Employee', perms: ['view'] }
-            ]
-        };
-    });
-
-    const [logs, setLogs] = useState(() => {
-        const saved = localStorage.getItem('audit_logs');
-        return saved ? JSON.parse(saved) : initialAuditLogs;
-    });
-
+    // Initial fetch for compliance specific data if not loaded
     useEffect(() => {
-        localStorage.setItem('compliance_state', JSON.stringify(complianceState));
-    }, [complianceState]);
-
-    useEffect(() => {
-        localStorage.setItem('audit_logs', JSON.stringify(logs));
-    }, [logs]);
-
-    const addLog = (action, status = 'Success', user = 'admin@shoppeal.tech') => {
-        const newLog = {
-            id: Date.now(),
-            action,
-            user,
-            ip: '192.168.1.1',
-            time: 'Just now',
-            status
-        };
-        setLogs(prev => [newLog, ...prev]);
-        setShowToast(true);
-        setTimeout(() => setShowToast(false), 3000);
-    };
+        if (!complianceStatus) fetchComplianceStatus();
+        if (auditLogs.length === 0) fetchAuditLogs();
+    }, [complianceStatus, auditLogs.length, fetchComplianceStatus, fetchAuditLogs]);
 
     const handleConfig = (title) => {
         const mapping = {
@@ -152,26 +118,39 @@ export function Compliance() {
     };
 
     const handleExportLogs = () => {
-        const headers = ["ID,Action,User,IP Address,Time,Status"];
-        const rows = logs.map(log =>
-            `${log.id},${log.action},${log.user},${log.ip},${log.time},${log.status}`
-        );
-        const csvContent = "data:text/csv;charset=utf-8," + headers.concat(rows).join("\n");
-        const encodedUri = encodeURI(csvContent);
+        // Use the backend export endpoint
         const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", "system_audit_logs.csv");
+        link.href = `${apiClient.baseURL}/compliance/audit-logs/export`;
+        link.download = 'audit-logs.csv';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        addLog('Audit Logs Exported');
+        addNotification('System Audit Logs Exported', 'info');
     };
 
-    const filteredLogs = logs.filter(log =>
+    const handleBroadcast = async () => {
+        setIsProcessing(true);
+        try {
+            await broadcastConsent('v1.0.0');
+        } finally {
+            setIsProcessing(false);
+            setActiveModal(null);
+        }
+    };
+
+    const filteredLogs = auditLogs.filter(log =>
         log.action.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        log.user.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        log.status.toLowerCase().includes(searchQuery.toLowerCase())
+        (log.user?.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (log.status || '').toLowerCase().includes(searchQuery.toLowerCase())
     );
+
+    if (isLoading && !complianceStatus) {
+        return (
+            <div className="flex h-[60vh] items-center justify-center">
+                <div className="h-12 w-12 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6 max-w-full overflow-x-hidden box-border px-4 md:px-0">
@@ -180,48 +159,15 @@ export function Compliance() {
                 <p className="text-[11px] md:text-sm text-slate-500 dark:text-slate-400 mt-1">Manage data privacy, access controls, and regulatory requirements.</p>
             </div>
 
-            {/* Success Toast */}
-            {showToast && (
-                <div className="fixed top-24 right-8 z-[200] flex items-center gap-4 px-6 py-4 bg-emerald-600 text-white rounded-2xl shadow-2xl animate-in slide-in-from-right-full">
-                    <CheckCircle2 size={20} />
-                    <p className="text-sm font-black uppercase tracking-wider">System Settings Updated</p>
-                </div>
-            )}
-
             {/* RBAC Modal */}
             <Modal isOpen={activeModal === 'rbac'} onClose={() => setActiveModal(null)} title="Role Permissions" icon={ShieldCheck}>
                 <div className="space-y-6">
-                    {complianceState.roles.map((role, idx) => (
-                        <div key={role.id} className="p-5 rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20">
-                            <h4 className="text-sm font-black text-slate-900 dark:text-white mb-4 flex items-center justify-between">
-                                {role.name}
-                                <span className="text-[10px] text-slate-400 uppercase tracking-widest">{role.perms.length} Active Rules</span>
-                            </h4>
-                            <div className="grid grid-cols-2 gap-3">
-                                {['view', 'edit', 'export', 'manage'].map(perm => (
-                                    <label key={perm} className="flex items-center gap-3 p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 cursor-pointer hover:border-primary-200 transition-all">
-                                        <input
-                                            type="checkbox"
-                                            checked={role.perms.includes(perm)}
-                                            onChange={() => {
-                                                const newRoles = [...complianceState.roles];
-                                                const currentPerms = newRoles[idx].perms;
-                                                newRoles[idx].perms = currentPerms.includes(perm)
-                                                    ? currentPerms.filter(p => p !== perm)
-                                                    : [...currentPerms, perm];
-                                                setComplianceState({ ...complianceState, roles: newRoles });
-                                                addLog(`Permission Updated: ${role.name}/${perm}`);
-                                            }}
-                                            className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
-                                        />
-                                        <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wide">{perm} Data</span>
-                                    </label>
-                                ))}
-                            </div>
-                        </div>
-                    ))}
+                    <p className="text-sm text-slate-500">RBAC configurations are synchronized with the core server architecture.</p>
+                    <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs font-bold leading-relaxed">
+                        Changes to core permissions require system administrator privileges and may affect API access immediately.
+                    </div>
                     <button onClick={() => setActiveModal(null)} className="w-full py-4 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl">
-                        Commit Changes
+                        Done
                     </button>
                 </div>
             </Modal>
@@ -234,30 +180,15 @@ export function Compliance() {
                             <p className="text-sm font-black text-emerald-900 dark:text-emerald-400">AES-256 Storage Encryption</p>
                             <p className="text-[11px] font-medium text-emerald-700/60 dark:text-emerald-500">Currently securing all screenshots & logs</p>
                         </div>
-                        <label className="relative inline-flex items-center cursor-pointer scale-125">
-                            <input
-                                type="checkbox"
-                                className="sr-only peer"
-                                checked={complianceState.encryptionActive}
-                                onChange={(e) => {
-                                    setComplianceState({ ...complianceState, encryptionActive: e.target.checked });
-                                    addLog(`Encryption ${e.target.checked ? 'Enabled' : 'Disabled'}`);
-                                }}
-                            />
-                            <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-emerald-600 shadow-inner"></div>
-                        </label>
-                    </div>
-                    <div className="space-y-3">
-                        <div className="p-4 rounded-xl border border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <Key size={16} className="text-slate-400" />
-                                <span className="text-xs font-bold text-slate-600 dark:text-slate-400">Master Secret Key</span>
-                            </div>
-                            <span className="text-[10px] font-mono p-1 bg-slate-100 dark:bg-slate-800 rounded">•••• •••• •••• 5G2H</span>
+                        <div className="h-6 w-11 bg-emerald-600 rounded-full flex items-center px-1">
+                            <div className="h-4 w-4 bg-white rounded-full translate-x-5" />
                         </div>
                     </div>
+                    <div className="p-4 rounded-xl border border-slate-100 dark:border-slate-800 text-slate-500 text-xs leading-relaxed">
+                        Encryption is managed at the database and storage level. Manual toggling is restricted for data integrity.
+                    </div>
                     <button onClick={() => setActiveModal(null)} className="w-full py-4 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl">
-                        Update Key Policy
+                        Close
                     </button>
                 </div>
             </Modal>
@@ -265,37 +196,18 @@ export function Compliance() {
             {/* GDPR Modal */}
             <Modal isOpen={activeModal === 'gdpr'} onClose={() => setActiveModal(null)} title="GDPR Controls" icon={Shield}>
                 <div className="space-y-6">
-                    <div className="space-y-2">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Data Retention Period</p>
-                        <select
-                            value={complianceState.dataRetentionDays}
-                            onChange={(e) => {
-                                setComplianceState({ ...complianceState, dataRetentionDays: parseInt(e.target.value) });
-                                addLog(`Retention Period Set: ${e.target.value} Days`);
-                            }}
-                            className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 dark:bg-slate-800 dark:border-slate-800 text-sm font-bold appearance-none outline-none focus:border-primary-500"
-                        >
-                            <option value={90}>90 Days (Minimum)</option>
-                            <option value={365}>1 Year (Default)</option>
-                            <option value={1095}>3 Years (Extended)</option>
-                            <option value={2555}>7 Years (Maximum)</option>
-                        </select>
+                    <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Data Retention Policy</p>
+                        <p className="text-sm font-bold text-slate-700 dark:text-slate-300">{complianceStatus?.dataRetentionDays || 365} Days</p>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                         <button className="flex flex-col items-center gap-3 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 hover:border-primary-200 transition-all">
                             <Globe size={24} className="text-primary-600" />
                             <span className="text-[10px] font-black uppercase tracking-widest text-slate-600">Region Block</span>
                         </button>
-                        <button
-                            onClick={() => {
-                                if (confirm('Wipe all archived employee data? This cannot be undone.')) {
-                                    addLog('Bulk Data Wipe Executed', 'Warning');
-                                }
-                            }}
-                            className="flex flex-col items-center gap-3 p-6 rounded-2xl border border-red-50 dark:border-red-900/10 bg-red-50/30 dark:bg-red-900/5 hover:border-red-200 transition-all"
-                        >
-                            <Trash2 size={24} className="text-red-600" />
-                            <span className="text-[10px] font-black uppercase tracking-widest text-red-600">Purge Data</span>
+                        <button className="flex flex-col items-center gap-3 p-6 rounded-2xl border border-red-50 dark:border-red-900/10 bg-red-50/30 dark:bg-red-900/5 hover:border-red-200 transition-all opacity-50 cursor-not-allowed">
+                            <Trash2 size={24} className="text-red-400" />
+                            <span className="text-[10px] font-black uppercase tracking-widest text-red-400">Purge Data</span>
                         </button>
                     </div>
                 </div>
@@ -306,26 +218,27 @@ export function Compliance() {
                 <div className="space-y-6">
                     <div className="p-8 rounded-[2.5rem] bg-slate-900 text-white relative overflow-hidden">
                         <div className="relative z-10">
-                            <h4 className="text-2xl font-black mb-1">93.3%</h4>
+                            <h4 className="text-2xl font-black mb-1">
+                                {complianceStatus?.consentStats ? Math.round((complianceStatus.consentStats.given / complianceStatus.consentStats.total) * 100) : 0}%
+                            </h4>
                             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-6">Total Policy Compliance</p>
                             <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-                                <div className="h-full bg-emerald-500" style={{ width: '93.3%' }}></div>
+                                <div
+                                    className="h-full bg-emerald-500 transition-all duration-1000"
+                                    style={{ width: `${complianceStatus?.consentStats ? (complianceStatus.consentStats.given / complianceStatus.consentStats.total) * 100 : 0}%` }}
+                                />
                             </div>
                         </div>
                         <FileCheck className="absolute top-1/2 -right-4 -translate-y-1/2 text-white/5" size={120} />
                     </div>
                     <div className="space-y-3">
                         <button
-                            onClick={() => {
-                                addLog('New Consent Policy Broadcasted');
-                                setActiveModal(null);
-                            }}
-                            className="w-full p-4 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-primary-600 hover:text-white transition-all shadow-sm"
+                            onClick={handleBroadcast}
+                            disabled={isProcessing}
+                            className="w-full p-4 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-primary-600 hover:text-white transition-all shadow-sm disabled:opacity-50"
                         >
-                            <Send size={16} /> Broadcast New Policy
-                        </button>
-                        <button className="w-full p-4 rounded-xl border border-slate-100 dark:border-slate-800 text-xs font-black uppercase tracking-widest text-slate-400 flex items-center justify-center gap-3 hover:bg-slate-50 transition-all">
-                            <UserCheck size={16} /> Resend Pending (3)
+                            {isProcessing ? <div className="h-4 w-4 border-2 border-slate-400 border-t-white rounded-full animate-spin" /> : <Send size={16} />}
+                            Broadcast New Policy
                         </button>
                     </div>
                 </div>
@@ -338,20 +251,13 @@ export function Compliance() {
                         <QrCode size={160} className="text-slate-900 dark:text-white" />
                     </div>
                     <div className="text-center space-y-2">
-                        <h4 className="text-sm font-black text-slate-900 dark:text-white">Scan setup code</h4>
-                        <p className="text-[11px] font-medium text-slate-500 max-w-[240px]">Use Google Authenticator or Microsoft Auth to secure your account.</p>
+                        <h4 className="text-sm font-black text-slate-900 dark:text-white">Security Policy</h4>
+                        <p className="text-[11px] font-medium text-slate-500 max-w-[240px]">
+                            {complianceStatus?.twoFactorRequired ? 'Two-factor authentication is currently ENFORCED for all accounts.' : 'Two-factor authentication is optional but highly recommended.'}
+                        </p>
                     </div>
-                    <button
-                        onClick={() => {
-                            setComplianceState({ ...complianceState, twoFactorActive: !complianceState.twoFactorActive });
-                            addLog(`2FA ${!complianceState.twoFactorActive ? 'Enabled' : 'Disabled'}`);
-                        }}
-                        className={cn(
-                            "w-full py-4 rounded-2xl font-black text-sm uppercase tracking-widest transition-all shadow-xl",
-                            complianceState.twoFactorActive ? "bg-red-50 text-red-600" : "bg-primary-600 text-white"
-                        )}
-                    >
-                        {complianceState.twoFactorActive ? 'Disable 2FA Protection' : 'Enable 2FA Protection'}
+                    <button onClick={() => setActiveModal(null)} className="w-full py-4 rounded-2xl bg-primary-600 text-white font-black text-sm uppercase tracking-widest transition-all shadow-xl">
+                        Done
                     </button>
                 </div>
             </Modal>
@@ -369,8 +275,8 @@ export function Compliance() {
                     icon={Lock}
                     title="Data encryption"
                     description="Enterprise-grade AES-256 encryption for all stored screenshots, logs, and sensitive employee data."
-                    badge={complianceState.encryptionActive ? "Encrypted" : "Decrypted"}
-                    active={complianceState.encryptionActive}
+                    badge={complianceStatus?.encryptionEnabled !== false ? "Encrypted" : "Decrypted"}
+                    active={complianceStatus?.encryptionEnabled !== false}
                     onSettingClick={handleConfig}
                 />
                 <ComplianceCard
@@ -378,14 +284,14 @@ export function Compliance() {
                     title="GDPR compliance settings"
                     description="Configure data retention policies, right-to-be-forgotten requests, and region-specific privacy controls."
                     badge="Compliant"
-                    active={complianceState.gdprRegionLock}
+                    active={complianceStatus?.gdprRegionLock !== false}
                     onSettingClick={handleConfig}
                 />
                 <ComplianceCard
                     icon={FileCheck}
                     title="Employee consent forms"
                     description="Manage digital consent signatures and privacy disclosure agreements for all monitored staff."
-                    badge={`${complianceState.consentStats.accepted}/${complianceState.consentStats.total}`}
+                    badge={complianceStatus?.consentStats ? `${complianceStatus.consentStats.given}/${complianceStatus.consentStats.total}` : 'N/A'}
                     active={true}
                     onSettingClick={handleConfig}
                 />
@@ -393,7 +299,7 @@ export function Compliance() {
                     icon={ClipboardList}
                     title="Audit logs"
                     description="Comprehensive tracking of all system access and administrative actions for security auditing."
-                    badge={`${logs.length} Entries`}
+                    badge={`${auditLogs.length} Entries`}
                     active={true}
                     onSettingClick={handleConfig}
                 />
@@ -401,7 +307,7 @@ export function Compliance() {
                     icon={Fingerprint}
                     title="Two-factor authentication"
                     description="Enforce 2FA for all administrative accounts to prevent unauthorized access to sensitive data."
-                    badge={complianceState.twoFactorActive ? "Enabled" : "Disabled (Setup)"}
+                    badge={complianceStatus?.twoFactorRequired ? "Enforced" : "Optional"}
                     active={true}
                     onSettingClick={handleConfig}
                 />
@@ -449,23 +355,23 @@ export function Compliance() {
                                     <td className="px-0 py-1 md:px-6 md:py-4 text-sm font-black md:font-bold block md:table-cell text-slate-900 dark:text-white">{log.action}</td>
                                     <td className="px-0 py-1 md:px-6 md:py-4 text-xs md:text-sm text-slate-500 block md:table-cell break-words min-w-0">
                                         <span className="md:hidden text-[10px] font-black uppercase tracking-widest text-slate-400 mr-2">User:</span>
-                                        {log.user}
+                                        {log.user?.name || log.user?.email || 'System'}
                                     </td>
                                     <td className="px-0 py-1 md:px-6 md:py-4 text-[10px] md:text-sm font-mono text-slate-400 block md:table-cell">
                                         <span className="md:hidden text-[10px] font-black uppercase tracking-widest text-slate-400 mr-2 font-sans">IP:</span>
-                                        {log.ip}
+                                        {log.ip || '---'}
                                     </td>
                                     <td className="px-0 py-1 md:px-6 md:py-4 text-xs md:text-sm text-slate-400 block md:table-cell">
                                         <span className="md:hidden text-[10px] font-black uppercase tracking-widest text-slate-400 mr-2">Time:</span>
-                                        {log.time}
+                                        {new Date(log.timestamp).toLocaleString()}
                                     </td>
                                     <td className="px-0 py-2 md:px-6 md:py-4 block md:table-cell">
-                                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${log.status === 'Success' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20' :
-                                            log.status === 'Warning' ? 'bg-amber-50 text-amber-600 dark:bg-amber-900/20' :
+                                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${log.status === 'success' || log.status === 'Success' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20' :
+                                            log.status === 'warning' || log.status === 'Warning' ? 'bg-amber-50 text-amber-600 dark:bg-amber-900/20' :
                                                 'bg-red-50 text-red-600 dark:bg-red-900/20'
                                             }`}>
-                                            {log.status === 'Success' ? <CheckCircle2 size={12} /> :
-                                                log.status === 'Warning' ? <AlertTriangle size={12} /> :
+                                            {(log.status === 'success' || log.status === 'Success') ? <CheckCircle2 size={12} /> :
+                                                (log.status === 'warning' || log.status === 'Warning') ? <AlertTriangle size={12} /> :
                                                     <Info size={12} />}
                                             {log.status}
                                         </span>

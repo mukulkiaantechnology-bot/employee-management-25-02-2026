@@ -2,26 +2,14 @@ import React, { useState } from 'react';
 import {
     Bell, UserX, Zap, MapPin, TrendingUp, Settings2, ShieldAlert,
     Clock, AlertCircle, CheckCircle2, X, Sliders, AlertTriangle,
-    Activity, Shield, Info
+    Activity, Shield, Info, ArrowLeft
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { useRealTime } from '../hooks/RealTimeContext';
+import { useNavigate } from 'react-router-dom';
 
 const cn = (...inputs) => twMerge(clsx(inputs));
-
-// --- Mock Data ---
-const mockHistory = [
-    { id: 1, type: 'critical', title: 'Geofence Violation', message: 'John Doe left "Headquarters" during active shift.', time: '10:42 AM', date: 'Today', icon: MapPin },
-    { id: 2, type: 'warning', title: 'Idle Time Exceeded', message: 'Sarah Brown has been idle for 45 minutes.', time: '09:15 AM', date: 'Today', icon: UserX },
-    { id: 3, type: 'info', title: 'Shift Started Late', message: 'Alex Johnson clocked in 15m late.', time: '09:15 AM', date: 'Today', icon: Clock },
-    { id: 4, type: 'critical', title: 'Unusual Activity', message: 'Mass file download detected (5GB) by Jane Smith.', time: 'Yesterday', date: 'Feb 12', icon: Zap },
-    { id: 5, type: 'warning', title: 'Overtime Threshold', message: 'Michael Lee exceeded 9h daily limit.', time: 'Yesterday', date: 'Feb 12', icon: TrendingUp },
-    { id: 6, type: 'info', title: 'Shift Ended Early', message: 'David Wilson clocked out 30m early.', time: '4:30 PM', date: 'Feb 11', icon: Clock },
-    { id: 7, type: 'warning', title: 'Late Arrival', message: 'Emily Davis arrived 20m late to Client Site A.', time: '09:20 AM', date: 'Feb 11', icon: MapPin },
-    { id: 8, type: 'critical', title: 'Security Policy', message: 'Unauthorized USB device detected on WS-42.', time: '11:15 AM', date: 'Feb 10', icon: ShieldAlert },
-    { id: 9, type: 'info', title: 'System Update', message: 'Automatic policy update applied successfully.', time: '02:00 AM', date: 'Feb 10', icon: Settings2 },
-    { id: 10, type: 'warning', title: 'Missed Check-in', message: 'James Miller missed scheduled 12:00 PM check-in.', time: '12:15 PM', date: 'Feb 09', icon: AlertCircle },
-];
 
 // --- Components ---
 
@@ -119,7 +107,7 @@ const LogsModal = ({ isOpen, onClose, logs }) => {
     );
 };
 
-const AlertConfigModal = ({ isOpen, onClose, title, type, onSave }) => {
+const AlertConfigModal = ({ isOpen, onClose, title, type, onSave, geofences = [] }) => {
     if (!isOpen) return null;
 
     const [threshold, setThreshold] = useState(30);
@@ -187,12 +175,15 @@ const AlertConfigModal = ({ isOpen, onClose, title, type, onSave }) => {
                         <div className="space-y-4">
                             <label className="text-sm font-bold text-slate-600 dark:text-slate-300">Monitored Zones</label>
                             <div className="space-y-2">
-                                {['Headquarters', 'Client Site A', 'Warehouse Beta'].map(zone => (
-                                    <label key={zone} className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 cursor-pointer border border-transparent hover:border-primary-200 transition-all">
+                                {geofences.map(zone => (
+                                    <label key={zone.id} className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 cursor-pointer border border-transparent hover:border-primary-200 transition-all">
                                         <input type="checkbox" defaultChecked className="w-4 h-4 text-primary-600 rounded focus:ring-primary-500" />
-                                        <span className="text-sm font-bold text-slate-700 dark:text-slate-300">{zone}</span>
+                                        <span className="text-sm font-bold text-slate-700 dark:text-slate-300">{zone.name}</span>
                                     </label>
                                 ))}
+                                {geofences.length === 0 && (
+                                    <p className="text-xs text-slate-400">No geofences configured. Add them in Location Tracking.</p>
+                                )}
                             </div>
                         </div>
                     )}
@@ -256,30 +247,82 @@ const AlertConfigModal = ({ isOpen, onClose, title, type, onSave }) => {
 };
 
 export function Alerts() {
-    const [alerts, setAlerts] = useState({
-        idle: true,
-        unusual: true,
-        missed: true,
-        geofence: false,
-        overtime: true
-    });
+    const { alertConfigs, alertHistory, updateAlertConfig, addNotification, geofences } = useRealTime();
+    const navigate = useNavigate();
+    const [localConfigs, setLocalConfigs] = useState([]);
     const [activeModal, setActiveModal] = useState(null); // 'idle', 'unusual', etc.
     const [showLogsModal, setShowLogsModal] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [showToast, setShowToast] = useState(false);
 
-    const handleToggle = (key) => {
-        setAlerts(prev => ({ ...prev, [key]: !prev[key] }));
+    // Sync local state when backend configs load
+    React.useEffect(() => {
+        if (alertConfigs.length) {
+            setLocalConfigs(alertConfigs);
+        } else {
+            // Default fallbacks if no records in DB yet
+            setLocalConfigs([
+                { type: 'idle', enabled: true, threshold: 30, sensitivity: 'Medium' },
+                { type: 'unusual', enabled: true, threshold: 0, sensitivity: 'Medium' },
+                { type: 'missed', enabled: true, threshold: 15, sensitivity: 'Medium' },
+                { type: 'geofence', enabled: false, threshold: 0, sensitivity: 'Medium', zones: [] },
+                { type: 'overtime', enabled: true, threshold: 90, sensitivity: 'Medium' }
+            ]);
+        }
+    }, [alertConfigs]);
+
+    const handleToggle = (type) => {
+        setLocalConfigs(prev => prev.map(c => c.type === type ? { ...c, enabled: !c.enabled } : c));
     };
 
-    const handleSaveGlobal = () => {
+    const handleConfigSave = (type, updates) => {
+        setLocalConfigs(prev => prev.map(c => c.type === type ? { ...c, ...updates } : c));
+    };
+
+    const handleSaveGlobal = async () => {
         setIsSaving(true);
-        setTimeout(() => {
-            setIsSaving(false);
+        try {
+            await updateAlertConfig(localConfigs);
             setShowToast(true);
             setTimeout(() => setShowToast(false), 3000);
-        }, 1200);
+        } catch (error) {
+            addNotification('Failed to update settings', 'alert');
+        } finally {
+            setIsSaving(false);
+        }
     };
+
+    const getAlertConfig = (type) => localConfigs.find(c => c.type === type) || { enabled: false };
+
+    const mappedHistory = React.useMemo(() => {
+        return alertHistory.map(log => {
+            let type = 'info';
+            let icon = Bell;
+            let title = log.action.replace('alert_', '').replace(/_/g, ' ');
+
+            if (log.action.includes('critical') || log.action.includes('violation')) {
+                type = 'critical';
+            } else if (log.action.includes('warning') || log.action.includes('exceeded')) {
+                type = 'warning';
+            }
+
+            if (log.action.includes('geofence')) icon = MapPin;
+            else if (log.action.includes('idle')) icon = UserX;
+            else if (log.action.includes('missed')) icon = Clock;
+            else if (log.action.includes('unusual')) icon = Zap;
+            else if (log.action.includes('overtime')) icon = TrendingUp;
+
+            return {
+                id: log.id,
+                type,
+                title: title.charAt(0).toUpperCase() + title.slice(1),
+                message: log.details || 'System notification triggered.',
+                time: new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                date: new Date(log.timestamp).toLocaleDateString(),
+                icon
+            };
+        });
+    }, [alertHistory]);
 
     // Scroll Lock Logic - Prevent background scrolling when modal is open
     React.useEffect(() => {
@@ -301,6 +344,7 @@ export function Alerts() {
                 onClose={() => setActiveModal(null)}
                 title={activeModal ? activeModal.charAt(0).toUpperCase() + activeModal.slice(1) + ' Alert' : ''}
                 type={activeModal}
+                geofences={geofences}
                 onSave={() => {
                     setShowToast(true);
                     setTimeout(() => setShowToast(false), 3000);
@@ -310,7 +354,7 @@ export function Alerts() {
             <LogsModal
                 isOpen={showLogsModal}
                 onClose={() => setShowLogsModal(false)}
-                logs={mockHistory}
+                logs={mappedHistory}
             />
 
             <div className="space-y-8 pb-32 relative animate-fade-in px-2 md:px-0">
@@ -329,13 +373,24 @@ export function Alerts() {
 
                 {/* Header */}
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                    <div className="flex items-center gap-4">
-                        <div className="h-14 w-14 rounded-[1.5rem] bg-rose-600 text-white flex items-center justify-center shadow-[0_20px_40px_rgba(225,29,72,0.3)]">
-                            <Bell size={28} />
-                        </div>
-                        <div>
-                            <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">Smart Alerts</h1>
-                            <p className="text-sm font-bold text-slate-400">Real-time threat detection & operational notifications.</p>
+                    <div className="flex flex-col gap-4">
+                        <button
+                            onClick={() => navigate(-1)}
+                            className="group flex items-center gap-2 text-slate-500 hover:text-primary-600 transition-colors font-bold text-sm"
+                        >
+                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm group-hover:border-primary-500 transition-all">
+                                <ArrowLeft size={18} />
+                            </div>
+                            Dashboard
+                        </button>
+                        <div className="flex items-center gap-4 text-left">
+                            <div className="h-14 w-14 rounded-[1.5rem] bg-rose-600 text-white flex items-center justify-center shadow-[0_20px_40px_rgba(225,29,72,0.3)] shrink-0">
+                                <Bell size={28} />
+                            </div>
+                            <div>
+                                <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">Smart Alerts</h1>
+                                <p className="text-sm font-bold text-slate-400">Real-time threat detection & operational notifications.</p>
+                            </div>
                         </div>
                     </div>
                     <button
@@ -359,7 +414,7 @@ export function Alerts() {
                             <AlertSetting
                                 icon={UserX}
                                 title="Employee Idle Timeout"
-                                checked={alerts.idle}
+                                checked={getAlertConfig('idle').enabled}
                                 onChange={() => handleToggle('idle')}
                                 onSettingsClick={() => setActiveModal('idle')}
                                 description="Trigger alert when inactivity exceeds threshold."
@@ -368,7 +423,7 @@ export function Alerts() {
                             <AlertSetting
                                 icon={Zap}
                                 title="Unusual Activity Detection"
-                                checked={alerts.unusual}
+                                checked={getAlertConfig('unusual').enabled}
                                 onChange={() => handleToggle('unusual')}
                                 onSettingsClick={() => setActiveModal('unusual')}
                                 description="AI detection for suspicious patterns & data access."
@@ -377,7 +432,7 @@ export function Alerts() {
                             <AlertSetting
                                 icon={Clock}
                                 title="Missed Shift Alerts"
-                                checked={alerts.missed}
+                                checked={getAlertConfig('missed').enabled}
                                 onChange={() => handleToggle('missed')}
                                 onSettingsClick={() => setActiveModal('missed')}
                                 description="Instant notification for absenteeism."
@@ -386,7 +441,7 @@ export function Alerts() {
                             <AlertSetting
                                 icon={MapPin}
                                 title="Geofence Violations"
-                                checked={alerts.geofence}
+                                checked={getAlertConfig('geofence').enabled}
                                 onChange={() => handleToggle('geofence')}
                                 onSettingsClick={() => setActiveModal('geofence')}
                                 description="Alert on unauthorized zone entry/exit."
@@ -395,7 +450,7 @@ export function Alerts() {
                             <AlertSetting
                                 icon={TrendingUp}
                                 title="Overtime Threshold"
-                                checked={alerts.overtime}
+                                checked={getAlertConfig('overtime').enabled}
                                 onChange={() => handleToggle('overtime')}
                                 onSettingsClick={() => setActiveModal('overtime')}
                                 description="Monitor monitoring for burn-out risks & cost control."
@@ -419,8 +474,8 @@ export function Alerts() {
                                     </button>
                                 </div>
 
-                                <div className="space-y-6 overflow-y-auto pr-2 custom-scrollbar flex-1">
-                                    {mockHistory.slice(0, 5).map(log => (
+                                <div className="space-y-6 overflow-y-auto pr-2 custom-scrollbar flex-1 text-left">
+                                    {mappedHistory.slice(0, 5).map(log => (
                                         <div key={log.id} className="flex gap-4 group cursor-pointer p-2 -mx-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all">
                                             <div className={cn(
                                                 "h-10 w-10 shrink-0 rounded-xl flex items-center justify-center transition-all group-hover:scale-110 shadow-sm",
@@ -432,15 +487,21 @@ export function Alerts() {
                                             </div>
                                             <div className="min-w-0 flex-1">
                                                 <div className="flex items-center justify-between mb-1">
-                                                    <p className="text-sm font-black text-slate-900 dark:text-white truncate pr-2 group-hover:text-primary-600 transition-colors">{log.title}</p>
-                                                    <span className="text-[10px] font-bold text-slate-400 whitespace-nowrap bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">{log.time}</span>
+                                                    <p className="text-sm font-black text-slate-900 dark:text-white truncate pr-2 group-hover:text-primary-600 transition-colors uppercase tracking-tight leading-none">{log.title}</p>
+                                                    <span className="text-[10px] font-bold text-slate-400 whitespace-nowrap bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md leading-none">{log.time}</span>
                                                 </div>
-                                                <p className="text-xs font-medium text-slate-500 line-clamp-2 leading-relaxed group-hover:text-slate-700 dark:group-hover:text-slate-300 transition-colors">
+                                                <p className="text-xs font-medium text-slate-500 line-clamp-2 leading-tight group-hover:text-slate-700 dark:group-hover:text-slate-300 transition-colors">
                                                     {log.message}
                                                 </p>
                                             </div>
                                         </div>
                                     ))}
+                                    {mappedHistory.length === 0 && (
+                                        <div className="flex flex-col items-center justify-center py-10 opacity-40">
+                                            <Info size={32} className="mb-2" />
+                                            <p className="text-xs font-bold uppercase tracking-widest text-slate-400">No recent alerts</p>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>

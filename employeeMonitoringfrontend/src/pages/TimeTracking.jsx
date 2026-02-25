@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Play, Square, Plus, MoreHorizontal, Clock, Coffee, AlertTriangle, Calendar, ChevronLeft, ChevronRight, BarChart2, X } from 'lucide-react';
 import { useRealTime } from '../hooks/RealTimeContext';
 import { InteractiveCard } from '../components/ui/InteractiveCard';
@@ -48,18 +48,24 @@ const TimelineSegment = ({ start, duration, type, label }) => {
     );
 };
 
-const VisualTimeline = ({ date }) => {
-    // Generate semi-random mock data based on the date to simulate "working" state
-    const seed = date.getDate() + date.getMonth() * 10;
-    const segments = [
-        { start: 8 + (seed % 2), duration: 2, type: 'work', label: 'Morning Task' },
-        { start: 10 + (seed % 2), duration: 1, type: 'meeting', label: 'Team Standup' },
-        { start: 11.5, duration: 0.5, type: 'break', label: 'Quick Break' },
-        { start: 12, duration: 2 + (seed % 1.5), type: 'work', label: 'Deep Work' },
-        { start: 14 + (seed % 1), duration: 0.8, type: 'break', label: 'Lunch' },
-        { start: 15, duration: 2, type: 'work', label: 'Feature Dev' },
-        { start: 17.5, duration: 1, type: 'idle', label: 'Review' },
-    ];
+const VisualTimeline = ({ date, entries = [] }) => {
+    // Process entries into timeline segments
+    const dateStr = date.toISOString().split('T')[0];
+    const dayEntries = entries.filter(e => e.date?.startsWith(dateStr) || e.startTime?.startsWith(dateStr));
+
+    const segments = dayEntries.map(entry => {
+        const start = new Date(entry.startTime);
+        const end = entry.endTime ? new Date(entry.endTime) : new Date();
+        const startHour = start.getHours() + start.getMinutes() / 60;
+        const durationHours = (end - start) / 3600000;
+
+        return {
+            start: startHour,
+            duration: durationHours,
+            type: entry.type || 'work',
+            label: entry.title || entry.task
+        };
+    });
 
     const hours = Array.from({ length: 25 }, (_, i) => i);
 
@@ -102,26 +108,39 @@ const VisualTimeline = ({ date }) => {
     );
 };
 
-// Generate static mock data outside component to prevent re-render flickering
-const heatmapMockData = Array.from({ length: 30 }, (_, i) => {
-    const val = Math.random() * 10;
-    return {
-        id: i + 1,
-        day: i + 1,
-        hours: val > 2 ? val : 0,
-        intensity: val > 8 ? 'bg-emerald-600' : val > 6 ? 'bg-emerald-500' : val > 4 ? 'bg-emerald-400' : val > 0 ? 'bg-emerald-300' : 'bg-slate-100 dark:bg-slate-800'
-    };
-});
-
 // --- New Component: Shift Heatmap ---
-const HeatmapView = () => {
+const HeatmapView = ({ entries = [] }) => {
     const [hoveredDayId, setHoveredDayId] = useState(null);
-    const days = heatmapMockData;
+
+    // Aggregate entries by day for the last 30 days
+    const days = useMemo(() => {
+        const result = [];
+        const today = new Date();
+        for (let i = 29; i >= 0; i--) {
+            const d = new Date(today);
+            d.setDate(d.getDate() - i);
+            const dStr = d.toISOString().split('T')[0];
+            const daySeconds = entries
+                .filter(e => e.date?.startsWith(dStr) || e.startTime?.startsWith(dStr))
+                .reduce((acc, curr) => acc + (curr.durationSeconds || 0), 0);
+
+            const hours = daySeconds / 3600;
+            const intensity = hours > 8 ? 'bg-emerald-600' : hours > 6 ? 'bg-emerald-500' : hours > 4 ? 'bg-emerald-400' : hours > 0 ? 'bg-emerald-300' : 'bg-slate-100 dark:bg-slate-800';
+
+            result.push({
+                id: i,
+                day: d.getDate(),
+                hours,
+                intensity
+            });
+        }
+        return result;
+    }, [entries]);
 
     return (
         <div>
             <div className="flex items-center justify-between mb-4">
-                <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300">Monthly Attendance Intensity</h4>
+                <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300">Activity Heatmap (30d)</h4>
                 <div className="flex items-center gap-2 text-xs text-slate-400">
                     <span>Less</span>
                     <div className="flex gap-1">
@@ -168,7 +187,10 @@ export function TimeTracking() {
         startTimer,
         pauseTimer,
         timeEntries,
-        addTimeEntry
+        addTimeEntry,
+        activityStats,
+        fetchActivityStats,
+        isLoading
     } = useRealTime();
 
     const [isOnBreak, setIsOnBreak] = useState(false);
@@ -178,6 +200,11 @@ export function TimeTracking() {
     const [showCalendar, setShowCalendar] = useState(false);
     const [timelineDate, setTimelineDate] = useState(new Date());
     const [viewDate, setViewDate] = useState(new Date()); // State for calendar viewpoint
+
+    // Fetch activity stats for today to get idle time
+    useEffect(() => {
+        fetchActivityStats(new Date());
+    }, [fetchActivityStats]);
 
     const handlePrevDay = () => {
         const d = new Date(timelineDate);
@@ -206,6 +233,18 @@ export function TimeTracking() {
         const s = (totalSeconds % 60).toString().padStart(2, '0');
         return `${h}:${m}:${s}`;
     };
+
+    // Calculate dynamic stats
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todayEntries = timeEntries.filter(e => e.date?.startsWith(todayStr) || e.startTime?.startsWith(todayStr));
+    const activeSeconds = todayEntries.reduce((acc, curr) => acc + (curr.durationSeconds || 0), 0) + (isToday ? timer.seconds : 0);
+    const activeHours = (activeSeconds / 3600).toFixed(1);
+    const scheduledHours = activityStats?.summary?.scheduledHours || 8;
+    const activeProgress = Math.min((activeSeconds / (scheduledHours * 3600)) * 100, 100);
+
+    const idleSeconds = activityStats?.summary?.idleSeconds || 0;
+    const idleProgress = Math.min((idleSeconds / (scheduledHours * 3600)) * 100, 100);
+    const idleHours = (idleSeconds / 3600).toFixed(1);
 
     return (
         <div className="space-y-6 pb-20">
@@ -284,15 +323,15 @@ export function TimeTracking() {
                             <span className="text-xs font-bold px-2 py-1 bg-emerald-100 text-emerald-700 rounded-md">On Track</span>
                         </div>
                         <div className="space-y-5">
-                            <ProgressBar label="Scheduled" sublabel="6h / 8h" value={75} color="bg-primary-500" />
-                            <ProgressBar label="Active" sublabel="5h 15m" value={65} color="bg-emerald-500" />
-                            <ProgressBar label="Idle" sublabel="45m" value={20} color="bg-amber-400" />
+                            <ProgressBar label="Scheduled" sublabel={`${scheduledHours}h`} value={100} color="bg-primary-500" />
+                            <ProgressBar label="Active" sublabel={`${activeHours}h / ${scheduledHours}h`} value={activeProgress} color="bg-emerald-500" />
+                            <ProgressBar label="Idle" sublabel={`${idleHours}h`} value={idleProgress} color="bg-amber-400" />
                         </div>
                     </InteractiveCard>
 
                     {/* Heatmap Widget - STATIC CONTAINER TO PREVENT COLOR BLEED */}
                     <div className="flex flex-col rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                        <HeatmapView />
+                        <HeatmapView entries={timeEntries} />
                     </div>
                 </div>
 
@@ -335,7 +374,7 @@ export function TimeTracking() {
                                 </button>
                             </div>
                         </div>
-                        <VisualTimeline date={timelineDate} />
+                        <VisualTimeline date={timelineDate} entries={timeEntries} />
                     </div>
 
                     {/* Work Logs List / Cards */}
@@ -359,18 +398,18 @@ export function TimeTracking() {
                                     <div className="flex-1">
                                         <div className="flex justify-between items-start">
                                             <div>
-                                                <h4 className="font-bold text-slate-900 dark:text-white">{item.task}</h4>
-                                                <p className="text-sm text-slate-500 font-medium">{item.project || 'General Project'}</p>
+                                                <h4 className="font-bold text-slate-900 dark:text-white">{item.title || item.task}</h4>
+                                                <p className="text-sm text-slate-500 font-medium">{item.project?.name || item.project || 'Operational Task'}</p>
                                             </div>
                                             <span className="text-xl font-mono font-bold text-slate-700 dark:text-slate-300">{item.duration}</span>
                                         </div>
                                         <div className="mt-2 flex items-center gap-4 text-xs text-slate-400 font-medium">
-                                            <span>{item.time || '10:00 AM - 12:00 PM'}</span>
+                                            <span>{item.startTime ? `${new Date(item.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${item.endTime ? new Date(item.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Present'}` : 'Manual Entry'}</span>
                                             <div className="h-1 w-1 rounded-full bg-slate-300"></div>
                                             <span className={clsx(
                                                 "uppercase tracking-wider",
-                                                item.status === 'Verified' ? "text-emerald-500" : "text-amber-500"
-                                            )}>{item.status}</span>
+                                                item.status === 'Verified' || item.status === 'completed' ? "text-emerald-500" : "text-amber-500"
+                                            )}>{item.status || 'Active'}</span>
                                         </div>
                                     </div>
                                 </div>

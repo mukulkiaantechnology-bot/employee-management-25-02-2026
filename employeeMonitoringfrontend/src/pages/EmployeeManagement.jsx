@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { apiFetch } from '../utils/api';
+import { apiClient } from '../utils/apiClient';
 
 const cn = (...inputs) => twMerge(clsx(inputs));
 
@@ -37,8 +37,8 @@ const TransparencyModal = ({ isOpen, onClose, employee }) => {
             const fetchSummary = async () => {
                 try {
                     setLoading(true);
-                    const data = await apiFetch(`/employees/${employee.id}/data-summary`);
-                    setSummary(data);
+                    const response = await apiClient.get(`/employees/${employee.id}/data-summary`);
+                    if (response.success) setSummary(response.data);
                 } catch (error) {
                     console.error('Failed to fetch data summary:', error);
                 } finally {
@@ -361,8 +361,8 @@ export function EmployeeManagement() {
 
     const fetchDepartments = useCallback(async () => {
         try {
-            const response = await apiFetch('/departments');
-            setDepartments(response.data || []);
+            const response = await apiClient.get('/departments');
+            if (response.success) setDepartments(response.data || []);
         } catch (error) {
             console.error('Failed to fetch departments:', error);
         }
@@ -377,9 +377,11 @@ export function EmployeeManagement() {
             params.append('page', currentPage);
             params.append('pageSize', itemsPerPage);
 
-            const response = await apiFetch(`/employees?${params.toString()}`);
-            setRealEmployees(response.data || []);
-            setStats({ total: response.meta?.total || 0 });
+            const response = await apiClient.get(`/employees?${params.toString()}`);
+            if (response.success) {
+                setRealEmployees(response.data || []);
+                setStats({ total: response.meta?.total || 0 });
+            }
         } catch (error) {
             console.error('Failed to fetch employees:', error);
         } finally {
@@ -402,10 +404,7 @@ export function EmployeeManagement() {
                 email: formData.get('email'), // Need email for creation
                 departmentId: formData.get('departmentId'),
             };
-            await apiFetch('/employees', {
-                method: 'POST',
-                body: JSON.stringify(newEmp),
-            });
+            await apiClient.post('/employees', newEmp);
             setShowAddModal(false);
             fetchEmployees();
         } catch (error) {
@@ -416,7 +415,7 @@ export function EmployeeManagement() {
     const handleDelete = async (id) => {
         if (confirm('Are you sure you want to deactivate this employee?')) {
             try {
-                await apiFetch(`/employees/${id}`, { method: 'DELETE' });
+                await apiClient.delete(`/employees/${id}`);
                 setSelectedEmployee(null);
                 fetchEmployees();
             } catch (error) {

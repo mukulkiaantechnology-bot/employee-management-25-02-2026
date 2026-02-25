@@ -1,13 +1,10 @@
-import { apiFetch } from '../utils/api';
+import { apiClient } from '../utils/apiClient';
 
 const AUTH_KEY = 'ems_auth_session';
 
 export const auth = {
     login: async (email, password) => {
-        const response = await apiFetch('/auth/login', {
-            method: 'POST',
-            body: JSON.stringify({ email, password }),
-        });
+        const response = await apiClient.post('/auth/login', { email, password });
 
         if (response.success) {
             const session = {

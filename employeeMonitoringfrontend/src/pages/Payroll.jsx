@@ -25,7 +25,7 @@ import {
     Loader2,
     Zap
 } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useRealTime } from '../hooks/RealTimeContext';
 import {
     AreaChart,
@@ -150,25 +150,54 @@ const StatCard = ({ title, value, subValue, icon: Icon, color, trend }) => (
     </div>
 );
 
-// Mock Data for Charts
-const earningsData = [
-    { month: 'Jan', earnings: 45000, hours: 1200 },
-    { month: 'Feb', earnings: 48000, hours: 1250 },
-    { month: 'Mar', earnings: 42000, hours: 1100 },
-    { month: 'Apr', earnings: 52000, hours: 1350 },
-    { month: 'May', earnings: 50000, hours: 1300 },
-    { month: 'Jun', earnings: 55000, hours: 1400 },
-];
 
-const invoices = [
-    { id: 'INV-001', client: 'Acme Corp', amount: '$12,500', date: '2026-02-10', status: 'Paid' },
-    { id: 'INV-002', client: 'Globex Inc', amount: '$8,200', date: '2026-02-12', status: 'Pending' },
-    { id: 'INV-003', client: 'Soylent Corp', amount: '$4,500', date: '2026-02-14', status: 'Draft' },
-    { id: 'INV-004', client: 'Umbrella Corp', amount: '$15,000', date: '2026-02-15', status: 'Sent' },
-];
 
 export function Payroll() {
-    const { employees, timeEntries, addNotification } = useRealTime();
+    const {
+        employees,
+        timeEntries,
+        payrolls,
+        fetchPayrolls,
+        generatePayroll,
+        updatePayrollStatus,
+        isLoading,
+        addNotification
+    } = useRealTime();
+
+    // Derived Data for Charts & Stats
+    const financialStats = useMemo(() => {
+        const totalGross = (payrolls || []).reduce((sum, p) => sum + (p.grossPay || p.baseSalary || 0), 0);
+        const avgRate = (employees || []).length > 0 ? employees.reduce((sum, e) => sum + (e.baseRate || 0), 0) / employees.length : 0;
+        const pendingCount = (payrolls || []).filter(p => p.status === 'draft' || p.status === 'processed').length;
+        const pendingValue = (payrolls || []).filter(p => p.status === 'draft' || p.status === 'processed').reduce((sum, p) => sum + (p.netPay || 0), 0);
+
+        // Group by month for earnings chart
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const chartData = months.map((m, i) => {
+            const monthPayrolls = (payrolls || []).filter(p => p.month === i + 1);
+            return {
+                month: m,
+                earnings: monthPayrolls.reduce((sum, p) => sum + (p.grossPay || p.baseSalary || 0), 0),
+                hours: monthPayrolls.reduce((sum, p) => sum + (p.hoursWorked || 0), 0)
+            };
+        }).filter(d => d.earnings > 0 || d.hours > 0).slice(-6);
+
+        // Remove fallback for demo
+        const finalChartData = chartData;
+
+        return { totalGross, avgRate, pendingCount, pendingValue, chartData: finalChartData };
+    }, [payrolls, employees]);
+
+    const derivedInvoices = useMemo(() => {
+        return (payrolls || []).filter(p => p.status === 'processed' || p.status === 'paid').map(p => ({
+            id: `INV-${p.id?.slice(-4).toUpperCase() || 'MOCK'}`,
+            client: p.employee?.name || 'Unknown',
+            amount: `$${(p.grossPay || p.baseSalary || 0).toLocaleString()}`,
+            date: new Date(p.createdAt).toISOString().split('T')[0],
+            status: p.status === 'paid' ? 'Paid' : 'Sent'
+        }));
+    }, [payrolls]);
+
     const [selectedPayslip, setSelectedPayslip] = useState(null);
     const [activeTab, setActiveTab] = useState('payroll'); // payroll, invoices
     const [searchQuery, setSearchQuery] = useState('');
@@ -183,6 +212,11 @@ export function Payroll() {
     const [connectingService, setConnectingService] = useState(null);
     const [connectionStep, setConnectionStep] = useState('idle');
 
+    // Initial fetch for payroll data
+    useEffect(() => {
+        if (payrolls.length === 0) fetchPayrolls();
+    }, [payrolls.length, fetchPayrolls]);
+
     const handleIntegrationFinish = () => {
         setConnectingService(null);
         setConnectionStep('idle');
@@ -190,60 +224,25 @@ export function Payroll() {
 
     const handleConnectTrigger = (id) => {
         setConnectingService(id);
-        setConnectionStep('connecting');
-        setTimeout(() => {
-            setConnectionStep('success');
-            setIntegrationStatuses(prev => ({ ...prev, [id]: 'Connected' }));
-            addNotification(`${id.charAt(0).toUpperCase() + id.slice(1)} connected successfully!`, "success");
-        }, 2500);
+        setConnectionStep('success'); // Immediate success as actual OAuth is external
+        setIntegrationStatuses(prev => ({ ...prev, [id]: 'Connected' }));
+        addNotification(`${id.charAt(0).toUpperCase() + id.slice(1)} connected successfully!`, "success");
     };
 
-    // Derived Payroll Data
+    // Processed Payroll Data from Context
     const payrollTimesheets = useMemo(() => {
-        return employees.map(emp => {
-            const empEntries = timeEntries.filter(e => e.employee === emp.name || (e.employee === 'You' && emp.id === 0));
-            let totalSeconds = empEntries.reduce((acc, entry) => {
-                const parts = entry.duration.split(':');
-                if (parts.length === 3) return acc + parseInt(parts[0]) * 3600 + parseInt(parts[1]) * 60 + parseInt(parts[2]);
-                return acc;
-            }, 0);
-
-            // Simulation Fallback: If no real hours, provide realistic monthly hours for demo
-            let totalHours = Math.round((totalSeconds / 3600) * 100) / 100;
-            if (totalHours === 0) {
-                // Generate a consistent "random" number based on employee name
-                const seed = emp.name.length + emp.id;
-                totalHours = 140 + (seed % 40);
-            }
-
-            // Salary Calculation
-            const isSenior = emp.role.toLowerCase().includes('senior') || emp.role.toLowerCase().includes('lead') || emp.role.toLowerCase().includes('architect') || emp.role.toLowerCase().includes('vp') || emp.role.toLowerCase().includes('director');
-            const baseRate = isSenior ? 65 + (emp.id % 20) : 45 + (emp.id % 15);
-
-            const overTimeThreshold = 160;
-            const overTime = Math.max(0, totalHours - overTimeThreshold);
-            const regularHours = totalHours - overTime;
-
-            const grossPayValue = (regularHours * baseRate) + (overTime * baseRate * 1.5);
-            const grossPay = `$${Math.round(grossPayValue).toLocaleString()}`;
-            const status = totalHours > 0 ? 'Ready' : 'Pending';
-
-            return {
-                id: emp.id,
-                employee: emp.name,
-                role: emp.role,
-                period: 'Feb 1 - Feb 28, 2026',
-                totalHours: totalHours,
-                overTime: Math.round(overTime * 10) / 10,
-                hourlyRate: baseRate,
-                grossPay: grossPay,
-                grossPayValue: grossPayValue,
-                deductions: grossPayValue * 0.2, // 20% Tax Simulation
-                netPay: grossPayValue * 0.8,
-                status: status
-            };
-        });
-    }, [employees, timeEntries]);
+        return (payrolls || []).map(p => ({
+            ...p,
+            employee: p.employee?.name || 'Unknown',
+            role: p.employee?.role || 'N/A',
+            period: `${new Date(p.periodStart).toLocaleDateString()} - ${new Date(p.periodEnd).toLocaleDateString()}`,
+            grossPay: `$${p.grossPay.toLocaleString()}`,
+            grossPayValue: p.grossPay,
+            deductions: p.deductions || (p.grossPay * 0.2),
+            netPay: p.netPay || (p.grossPay * 0.8),
+            status: p.status.charAt(0).toUpperCase() + p.status.slice(1)
+        }));
+    }, [payrolls]);
 
     const filteredPayroll = useMemo(() => {
         return payrollTimesheets.filter(row =>
@@ -257,14 +256,18 @@ export function Payroll() {
     // --- Financial Actions ---
     const [isRunningPayroll, setIsRunningPayroll] = useState(false);
 
-    const handleRunPayroll = () => {
+    const handleRunPayroll = async () => {
         setIsRunningPayroll(true);
         addNotification("Initializing payroll batch processing...", "info");
 
-        setTimeout(() => {
+        try {
+            await generatePayroll();
+            addNotification(`Successfully processed payroll for ${employees.length} employees.`, "success");
+        } catch (error) {
+            addNotification("Failed to process payroll batch", "error");
+        } finally {
             setIsRunningPayroll(false);
-            addNotification(`Successfully processed payroll for ${employees.length} employees ($142,500).`, "success");
-        }, 2000);
+        }
     };
 
     const handleDownloadReports = () => {
@@ -319,6 +322,17 @@ export function Payroll() {
         addNotification(`Payslip for ${payslip.employee} downloaded.`, "success");
     };
 
+    if (isLoading && payrolls.length === 0) {
+        return (
+            <div className="flex h-[60vh] items-center justify-center">
+                <div className="space-y-4 text-center">
+                    <div className="h-12 w-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto" />
+                    <p className="text-sm font-bold text-slate-500 animate-pulse">Syncing Payroll Data...</p>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-6 pb-20 max-w-full overflow-x-hidden box-border px-4 md:px-0">
             {/* Header */}
@@ -354,10 +368,38 @@ export function Payroll() {
 
             {/* Stats Overview */}
             <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 animate-slide-up">
-                <StatCard title="Total Payroll" value="$142,500" subValue="Next run: Feb 28" trend={5.2} icon={DollarSign} color="bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20" />
-                <StatCard title="Avg Hourly Rate" value="$48.50" subValue="Across 3 depts" trend={1.2} icon={Clock} color="bg-blue-50 text-blue-600 dark:bg-blue-900/20" />
-                <StatCard title="Outstanding Invoices" value="$22,500" subValue="4 Clients Pending" trend={-8} icon={Receipt} color="bg-amber-50 text-amber-600 dark:bg-amber-900/20" />
-                <StatCard title="Net Profit est." value="$85,200" subValue="Review Needed" trend={12} icon={TrendingUp} color="bg-purple-50 text-purple-600 dark:bg-purple-900/20" />
+                <StatCard
+                    title="Total Payroll"
+                    value={`$${financialStats.totalGross.toLocaleString()}`}
+                    subValue="Historical Total"
+                    trend={5.2}
+                    icon={DollarSign}
+                    color="bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20"
+                />
+                <StatCard
+                    title="Avg Hourly Rate"
+                    value={`$${financialStats.avgRate.toFixed(2)}`}
+                    subValue={`Across ${employees.length} employees`}
+                    trend={1.2}
+                    icon={Clock}
+                    color="bg-blue-50 text-blue-600 dark:bg-blue-900/20"
+                />
+                <StatCard
+                    title="Pending Payroll"
+                    value={`$${financialStats.pendingValue.toLocaleString()}`}
+                    subValue={`${financialStats.pendingCount} Drafts/Processed`}
+                    trend={-8}
+                    icon={Receipt}
+                    color="bg-amber-50 text-amber-600 dark:bg-amber-900/20"
+                />
+                <StatCard
+                    title="Gross Total Est"
+                    value={`$${financialStats.totalGross.toLocaleString()}`}
+                    subValue="Review Needed"
+                    trend={12}
+                    icon={TrendingUp}
+                    color="bg-purple-50 text-purple-600 dark:bg-purple-900/20"
+                />
             </div>
 
             {/* Main Content Area */}
@@ -369,7 +411,7 @@ export function Payroll() {
                             <h3 className="text-lg font-bold mb-6">Payroll Cost vs Hours</h3>
                             <div className="h-[250px] w-full">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <AreaChart data={earningsData}>
+                                    <AreaChart data={financialStats.chartData}>
                                         <defs>
                                             <linearGradient id="colorEarnings" x1="0" y1="0" x2="0" y2="1">
                                                 <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
@@ -549,9 +591,9 @@ export function Payroll() {
             {activeTab === 'invoices' && (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
                     <div className="lg:col-span-2 rounded-[2rem] border border-slate-200 bg-white p-4 md:p-6 dark:border-slate-800 dark:bg-slate-900 shadow-sm">
-                        <h3 className="text-base md:text-lg font-bold mb-6">Recent Invoices</h3>
+                        <h3 className="text-base md:text-lg font-bold mb-6">Recent Payroll Transactions</h3>
                         <div className="space-y-3 md:space-y-4">
-                            {invoices.map(inv => (
+                            {derivedInvoices.length > 0 ? derivedInvoices.map(inv => (
                                 <div key={inv.id} className="flex flex-row items-center justify-between p-3 md:p-4 rounded-xl border border-slate-100 dark:border-slate-800 hover:border-slate-300 transition-all bg-slate-50/50 dark:bg-slate-800/30 group">
                                     <div className="flex items-center gap-3 md:gap-4 truncate">
                                         <div className="h-10 w-10 md:h-10 md:w-10 shrink-0 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400">
@@ -571,7 +613,9 @@ export function Payroll() {
                                         )}>{inv.status}</p>
                                     </div>
                                 </div>
-                            ))}
+                            )) : (
+                                <div className="text-center py-10 text-slate-400 font-medium">No recent transactions found.</div>
+                            )}
                         </div>
                         <button className="w-full mt-6 py-4 md:py-3 rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-800 text-slate-400 font-bold hover:border-primary-500 hover:text-primary-600 transition-all flex items-center justify-center gap-2 text-xs md:text-sm">
                             <Plus size={18} /> Create New Invoice
@@ -655,7 +699,7 @@ export function Payroll() {
                                 </div>
                                 <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50">
                                     <p className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Payment Date</p>
-                                    <p className="text-sm font-bold text-slate-900 dark:text-white">Feb 28, 2026</p>
+                                    <p className="text-sm font-bold text-slate-900 dark:text-white">{selectedPayslip.paidAt ? new Date(selectedPayslip.paidAt).toLocaleDateString() : 'Pending'}</p>
                                 </div>
                             </div>
 
@@ -665,12 +709,12 @@ export function Payroll() {
                                     <span className="text-sm font-black text-slate-900 dark:text-white">${selectedPayslip.grossPayValue.toLocaleString()}</span>
                                 </div>
                                 <div className="flex justify-between items-center py-2.5 border-b border-slate-50 dark:border-slate-800/50">
-                                    <span className="text-xs md:text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-tight">Overtime</span>
-                                    <span className="text-sm font-black text-slate-900 dark:text-white">$0.00</span>
+                                    <span className="text-xs md:text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-tight">Overtime ({selectedPayslip.overtimeHours || 0}h)</span>
+                                    <span className="text-sm font-black text-slate-900 dark:text-white">${(selectedPayslip.overtimePay || 0).toLocaleString()}</span>
                                 </div>
                                 <div className="flex justify-between items-center py-2.5 border-b border-slate-50 dark:border-slate-800/50 text-red-500">
-                                    <span className="text-xs md:text-sm font-black uppercase tracking-tight">Tax Deductions (20%)</span>
-                                    <span className="text-sm font-black">-${selectedPayslip.deductions.toLocaleString()}</span>
+                                    <span className="text-xs md:text-sm font-black uppercase tracking-tight">Tax Deductions ({Math.round((selectedPayslip.taxRate || 0.2) * 100)}%)</span>
+                                    <span className="text-sm font-black">-${(selectedPayslip.taxDeduction || 0).toLocaleString()}</span>
                                 </div>
                             </div>
 

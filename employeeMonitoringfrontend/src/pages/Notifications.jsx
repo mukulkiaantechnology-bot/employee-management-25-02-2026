@@ -18,7 +18,7 @@ import { clsx } from 'clsx';
 import { useRealTime } from '../hooks/RealTimeContext';
 
 export function Notifications() {
-    const { notifications, markAllNotificationsRead, markNotificationAsRead, deleteNotification } = useRealTime();
+    const { notifications, markAllNotificationsRead, markNotificationAsRead, deleteNotification, deleteAllNotifications } = useRealTime();
     const [filter, setFilter] = useState('all');
     const [searchQuery, setSearchQuery] = useState('');
 
@@ -45,12 +45,7 @@ export function Notifications() {
 
     const handleDeleteAll = () => {
         if (window.confirm('Are you sure you want to delete all notifications?')) {
-            // We don't have a deleteAllNotifications action in context yet, 
-            // so we'll just delete them one by one or leave it for now.
-            // Or better, just clear the local view? No, that's bad.
-            // I'll just iterate and delete for now, or add deleteAll later.
-            // For simplicity in this step, I will just iterate.
-            notifications.forEach(n => deleteNotification(n.id));
+            deleteAllNotifications();
         }
     };
 
@@ -174,9 +169,11 @@ export function Notifications() {
                                                 n.type === 'success' && "bg-green-50 text-green-600 border-green-100 dark:bg-green-900/10 dark:text-green-400 dark:border-green-900/20",
                                                 n.type === 'info' && "bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-900/10 dark:text-blue-400 dark:border-blue-900/20"
                                             )}>
-                                                {n.category}
+                                                {n.category || n.type}
                                             </span>
-                                            <span className="text-xs font-bold text-slate-400">{n.date} • {n.time}</span>
+                                            <span className="text-xs font-bold text-slate-400">
+                                                {new Date(n.date || n.createdAt).toLocaleDateString()} • {new Date(n.date || n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                            </span>
                                             {n.unread && (
                                                 <span className="flex h-2 w-2 rounded-full bg-primary-500 ring-4 ring-primary-500/10 animate-pulse"></span>
                                             )}

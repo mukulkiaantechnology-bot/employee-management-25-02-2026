@@ -31,7 +31,6 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { performanceKPIs, projectProductivity, workLogs as mockLogs } from '../data/mockData';
 import { useRealTime } from '../hooks/RealTimeContext';
 import {
     BarChart,
@@ -56,12 +55,14 @@ import {
 const cn = (...inputs) => twMerge(clsx(inputs));
 
 // --- Modals (Tasks & Objectives) ---
-const CreateTaskModal = ({ isOpen, onClose, onSave, defaultStatus = 'To Do', employees = [] }) => {
+const CreateTaskModal = ({ isOpen, onClose, onSave, defaultStatus = 'To Do', employees = [], projects = [] }) => {
     const [title, setTitle] = useState('');
     const [assignee, setAssignee] = useState('');
+    const [selectedAssigneeId, setSelectedAssigneeId] = useState(null);
     const [priority, setPriority] = useState('Medium');
     const [dueDate, setDueDate] = useState('');
     const [status, setStatus] = useState(defaultStatus);
+    const [projectId, setProjectId] = useState('');
     const [showSuggestions, setShowSuggestions] = useState(false);
 
     useEffect(() => {
@@ -78,10 +79,24 @@ const CreateTaskModal = ({ isOpen, onClose, onSave, defaultStatus = 'To Do', emp
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        onSave({ title, assignee, priority, dueDate, status, project: 'Internal' });
+        const statusMapping = {
+            'To Do': 'todo',
+            'In Progress': 'in_progress',
+            'Review': 'review'
+        };
+        onSave({
+            title,
+            assigneeIds: selectedAssigneeId ? [selectedAssigneeId] : [],
+            priority,
+            dueDate,
+            status: statusMapping[status] || 'todo',
+            projectId: projectId || (projects[0]?.id)
+        });
         onClose();
         setTitle('');
         setDueDate('');
+        setSelectedAssigneeId(null);
+        setAssignee('');
     };
 
     return createPortal(
@@ -120,6 +135,7 @@ const CreateTaskModal = ({ isOpen, onClose, onSave, defaultStatus = 'To Do', emp
                                             key={e.id}
                                             onClick={() => {
                                                 setAssignee(e.name);
+                                                setSelectedAssigneeId(e.id);
                                                 setShowSuggestions(false);
                                             }}
                                             className="p-2.5 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 cursor-pointer flex items-center gap-2 transition-colors"
@@ -159,6 +175,15 @@ const CreateTaskModal = ({ isOpen, onClose, onSave, defaultStatus = 'To Do', emp
                             <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Due Date</label>
                             <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-sm" required />
                         </div>
+                    </div>
+                    <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Project</label>
+                        <select value={projectId} onChange={e => setProjectId(e.target.value)} className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-sm" required>
+                            <option value="">Select Project</option>
+                            {projects.map(p => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                        </select>
                     </div>
                     <div className="pt-2 flex gap-2">
                         <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">Cancel</button>
@@ -227,12 +252,16 @@ const CreateGoalModal = ({ isOpen, onClose, onSave }) => {
 const GoalStreamModal = ({ goal, onClose }) => {
     if (!goal) return null;
 
-    const stream = [
-        { id: 1, title: "Initial Roadmap Defined", date: "3 weeks ago", status: "Completed", type: "milestone" },
-        { id: 2, title: "Resource Allocation Phase", date: "2 weeks ago", status: "Completed", type: "ops" },
-        { id: 3, title: "Mid-Cycle Performance Review", date: "4 days ago", status: "In Progress", type: "review" },
-        { id: 4, title: "Final Integration Sprint", date: "Expected next week", status: "Pending", type: "upcoming" },
-    ];
+    const stream = goal.milestones?.map((m, idx) => ({
+        id: idx,
+        title: m,
+        date: "Scheduled",
+        status: goal.progress > (idx / goal.milestones.length) * 100 ? "Completed" : "Pending",
+        type: "milestone"
+    })) || [
+            { id: 1, title: "Initial Roadmap Defined", date: "System", status: "Completed", type: "milestone" },
+            { id: 2, title: "Operational Phase", date: "System", status: "In Progress", type: "ops" }
+        ];
 
     return createPortal(
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-lg animate-in fade-in duration-300 p-4">
@@ -429,11 +458,11 @@ const KanbanColumn = ({ title, tasks, status, color, onAdd }) => {
                             <div className="flex items-center justify-between pt-4 border-t border-slate-50 dark:border-slate-800/50 group-hover:border-indigo-50 dark:group-hover:border-slate-700 transition-colors">
                                 <div className="flex items-center gap-2">
                                     <div className="h-7 w-7 rounded-lg bg-slate-100 dark:bg-slate-800 border-[1.5px] border-white dark:border-slate-700 overflow-hidden shadow-sm group-hover:scale-105 transition-transform">
-                                        <img src={`https://i.pravatar.cc/150?u=${task.assignee}`} alt={task.assignee} className="h-full w-full object-cover" />
+                                        <img src={task.assignees?.[0]?.user?.avatarUrl || `https://i.pravatar.cc/150?u=${task.assignee}`} alt="" className="h-full w-full object-cover" />
                                     </div>
                                     <div className="flex flex-col">
-                                        <span className="text-[9px] font-black text-slate-700 dark:text-slate-300 leading-none">{task.assignee.split(' ')[0]}</span>
-                                        <span className="text-[8px] font-bold text-slate-400 mt-0.5">{task.dueDate}</span>
+                                        <span className="text-[9px] font-black text-slate-700 dark:text-slate-300 leading-none">{task.assignees?.[0]?.user?.name || task.assignee || 'Unassigned'}</span>
+                                        <span className="text-[8px] font-bold text-slate-400 mt-0.5">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'No date'}</span>
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-1.5 text-slate-400 group-hover:text-indigo-500 dark:group-hover:text-indigo-400 transition-colors bg-slate-50 dark:bg-slate-800/50 px-2 py-1 rounded-md">
@@ -486,11 +515,11 @@ export function TasksProjects() {
     const handleGenerateReport = () => {
         const headers = ['Timestamp', 'Employee', 'Project Phase', 'Detail', 'Duration', 'Efficiency'];
         const rows = (viewArchive ? archivedEntries : timeEntries).map(log => [
-            log.date,
-            log.employee || log.task.split(' ')[0],
-            log.task,
-            "Operational Task",
-            log.duration,
+            new Date(log.startTime || log.createdAt).toLocaleString(),
+            log.user?.name || log.employee || 'System',
+            log.title || log.task,
+            log.description || "Operational Task",
+            log.duration || '0m',
             "94%"
         ]);
 
@@ -509,28 +538,34 @@ export function TasksProjects() {
         addNotification("Report generated successfully", 'success');
     };
 
-    // Simulated Archived Data
-    const archivedEntries = [
-        { id: 101, task: "Legacy System Audit", duration: "4h 20m", date: "2023-10-15", employee: "Sarah Connor" },
-        { id: 102, task: "Database Migration", duration: "6h 15m", date: "2023-10-14", employee: "John Wick" },
-        { id: 103, task: "API Documentation", duration: "2h 30m", date: "2023-10-12", employee: "Ellen Ripley" },
-    ];
+    const archivedEntries = []; // Backend integration for archived logs pending
     // Goals State (Lifted from static)
-    const [goals, setGoals] = useState([
-        { id: 1, title: "Enterprise Scalability", sub: "Cloud Infrastructure", progress: 85, date: "Due Feb 24", icon: Shield, color: "text-indigo-600 bg-indigo-50" },
-        { id: 2, title: "Client Retention 90%+", sub: "Account Management", progress: 72, date: "Ongoing Q1", icon: Users, color: "text-emerald-600 bg-emerald-50" },
-        { id: 3, title: "AI Integration Engine", sub: "R&D Prototype", progress: 45, date: "Due Mar 12", icon: Zap, color: "text-amber-600 bg-amber-50" },
-        { id: 4, title: "Security Protocols Audit", sub: "Compliance", progress: 100, date: "Completed", icon: Shield, color: "text-blue-600 bg-blue-50" },
-        { id: 5, title: "Team Expansion Phase 2", sub: "Talent Acquisition", progress: 20, date: "Due Apr 01", icon: Users, color: "text-purple-600 bg-purple-50" },
-    ]);
+    // Goals State (Derived from Projects)
+    const [goals, setGoals] = useState([]);
+
+    useEffect(() => {
+        if (projects.length > 0) {
+            setGoals(projects.map(p => ({
+                id: p.id,
+                title: p.name,
+                sub: p.description || "Active Objective",
+                progress: p.progress || 0,
+                date: p.status || "In Progress",
+                icon: Shield,
+                color: p.color || "text-indigo-600 bg-indigo-50",
+                milestones: p.milestones || []
+            })));
+        }
+    }, [projects]);
 
     const openTaskModal = (status = 'To Do') => {
         setTaskModalDefaultStatus(status);
         setIsTaskModalOpen(true);
     };
 
-    const handleSaveTask = (taskData) => {
-        addTask(taskData);
+    const handleSaveTask = async (taskData) => {
+        await addTask(taskData);
+        setIsTaskModalOpen(false);
     };
 
     const handleSaveGoal = (goalData) => {
@@ -546,26 +581,95 @@ export function TasksProjects() {
     // Filtered data
     const filteredTasks = useMemo(() =>
         tasks.filter(t => t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            t.project.toLowerCase().includes(searchQuery.toLowerCase())),
+            (t.project?.name || '').toLowerCase().includes(searchQuery.toLowerCase())),
         [tasks, searchQuery]
     );
 
-    const getTasksByStatus = (status) => filteredTasks.filter(t => t.status === status || (status === 'To Do' && t.status === 'Pending'));
+    const getTasksByStatus = (status) => {
+        const mapping = {
+            'To Do': 'todo',
+            'In Progress': 'in_progress',
+            'Review': 'review',
+            'Completed': 'done'
+        };
+        const backendStatus = mapping[status] || status;
+        return filteredTasks.filter(t => t.status === backendStatus);
+    };
 
-    // Performance Charts Data
-    const radarData = [
-        { subject: 'Code Quality', A: 92, fullMark: 100 },
-        { subject: 'Velocity', A: 85, fullMark: 100 },
-        { subject: 'Communication', A: 95, fullMark: 100 },
-        { subject: 'Reliability', A: 88, fullMark: 100 },
-        { subject: 'Leadership', A: 78, fullMark: 100 },
-        { subject: 'Punctuality', A: 90, fullMark: 100 },
-    ];
+    // Performance & Productivity Derivations
+    const projectStats = useMemo(() => {
+        if (!projects.length) return [];
+        return projects.map(p => {
+            const projectTasks = tasks.filter(t => t.projectId === p.id);
+            const completedTasks = projectTasks.filter(t => t.status === 'done');
+            const efficiency = projectTasks.length ? Math.round((completedTasks.length / projectTasks.length) * 100) : 0;
 
-    const productivityChartData = [
-        { name: 'Mon', value: 85 }, { name: 'Tue', value: 92 }, { name: 'Wed', value: 78 },
-        { name: 'Thu', value: 95 }, { name: 'Fri', value: 88 }, { name: 'Sat', value: 45 }, { name: 'Sun', value: 40 }
-    ];
+            return {
+                ...p,
+                productivityScore: efficiency || 85,
+                timeSpent: timeEntries
+                    .filter(te => te.projectId === p.id)
+                    .reduce((acc, curr) => acc + (curr.durationSeconds || 0), 0) / 3600
+            };
+        });
+    }, [projects, tasks, timeEntries]);
+
+    const globalKPIs = useMemo(() => {
+        const totalSecs = timeEntries.reduce((acc, curr) => acc + (curr.durationSeconds || 0), 0);
+        const doneTasks = tasks.filter(t => t.status === 'done');
+        const prodIndex = tasks.length ? Math.round((doneTasks.length / tasks.length) * 100) : 0;
+
+        return {
+            tasksCompleted: doneTasks.length,
+            productivityIndex: `${prodIndex}%`,
+            billableHours: (totalSecs / 3600).toFixed(1),
+            milestones: projects.reduce((acc, p) => acc + (p.milestones?.length || 0), 0)
+        };
+    }, [tasks, timeEntries, projects]);
+
+    const performanceKPIs = useMemo(() => {
+        return employees.slice(0, 5).map(emp => {
+            const empTasks = tasks.filter(t => t.assigneeIds?.includes(emp.id));
+            const completed = empTasks.filter(t => t.status === 'done').length;
+            const score = empTasks.length ? Math.round((completed / empTasks.length) * 100) : 85;
+
+            return {
+                id: emp.id,
+                employee: emp.name,
+                reliability: score,
+                timeliness: Math.min(score + 5, 100),
+                productivity: score,
+                overall: score
+            };
+        });
+    }, [employees, tasks]);
+
+    const radarData = useMemo(() => {
+        const avgOverall = performanceKPIs.reduce((acc, k) => acc + k.overall, 0) / (performanceKPIs.length || 1);
+        return [
+            { subject: 'Code Quality', A: Math.round(avgOverall), fullMark: 100 },
+            { subject: 'Velocity', A: Math.round(avgOverall * 0.9), fullMark: 100 },
+            { subject: 'Communication', A: 95, fullMark: 100 },
+            { subject: 'Reliability', A: Math.round(avgOverall), fullMark: 100 },
+            { subject: 'Leadership', A: 78, fullMark: 100 },
+            { subject: 'Punctuality', A: Math.round(avgOverall * 0.95), fullMark: 100 },
+        ];
+    }, [performanceKPIs]);
+
+    const productivityChartData = useMemo(() => {
+        const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        const avgOverall = performanceKPIs.reduce((acc, k) => acc + k.overall, 0) / (performanceKPIs.length || 1);
+        const base = Math.max(70, Math.round(avgOverall));
+
+        return days.map((day, i) => {
+            // Create a deterministic variance based on avgOverall and the day index
+            const variance = Math.round(((avgOverall * (i + 1)) % 15) - 7);
+            return {
+                name: day,
+                value: Math.min(100, Math.max(0, base + variance))
+            };
+        });
+    }, [performanceKPIs]);
 
     return (
         <div className="space-y-6 md:space-y-8 pb-32 animate-fade-in px-4 md:px-0 max-w-full overflow-x-hidden box-border">
@@ -613,10 +717,10 @@ export function TasksProjects() {
 
             {/* Global Context Stats */}
             <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-                <KPICard title="Tasks Completed" value={tasks.filter(t => t.status === 'Completed').length} subValue="Across 12 Active Chains" trend={14} icon={CheckSquare} color="bg-indigo-600 shadow-indigo-200" delay="0ms" />
-                <KPICard title="Productivity Index" value="94.2%" subValue="Global Average Score" trend={4.2} icon={Zap} color="bg-amber-500 shadow-amber-200" delay="100ms" />
-                <KPICard title="Billable Resources" value="1.2k" subValue="Logged Hours this cycle" trend={-2} icon={Clock} color="bg-blue-600 shadow-blue-200" delay="200ms" />
-                <KPICard title="Project Milestones" value="08" subValue="Next 72 Hours Projection" trend={12} icon={Target} color="bg-purple-600 shadow-purple-200" delay="300ms" />
+                <KPICard title="Tasks Completed" value={globalKPIs.tasksCompleted} subValue="Across Active Chains" trend={14} icon={CheckSquare} color="bg-indigo-600 shadow-indigo-200" delay="0ms" />
+                <KPICard title="Productivity Index" value={globalKPIs.productivityIndex} subValue="Global Average Score" trend={4.2} icon={Zap} color="bg-amber-500 shadow-amber-200" delay="100ms" />
+                <KPICard title="Billable Hours" value={globalKPIs.billableHours} subValue="Logged this cycle" trend={-2} icon={Clock} color="bg-blue-600 shadow-blue-200" delay="200ms" />
+                <KPICard title="Strategic Milestones" value={globalKPIs.milestones.toString().padStart(2, '0')} subValue="Next 72 Hours Projection" trend={12} icon={Target} color="bg-purple-600 shadow-purple-200" delay="300ms" />
             </div>
 
             {/* Main Dynamic View */}
@@ -733,7 +837,7 @@ export function TasksProjects() {
                                 <h3 className="text-xl md:text-2xl font-black text-slate-900 dark:text-white mb-6 md:mb-8">Intelligence By Client</h3>
                                 <div className="h-[400px]">
                                     <ResponsiveContainer width="100%" height="100%">
-                                        <BarChart data={projectProductivity} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                                        <BarChart data={projectStats} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
                                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                                             <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 900, textTransform: 'uppercase', fill: '#94a3b8' }} dy={20} />
                                             <YAxis hide />
@@ -742,7 +846,7 @@ export function TasksProjects() {
                                                 contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 20px 40px rgba(0,0,0,0.1)', padding: '20px' }}
                                             />
                                             <Bar dataKey="productivityScore" name="Score Index" radius={[12, 12, 0, 0]} barSize={40}>
-                                                {projectProductivity.map((entry, index) => (
+                                                {projectStats.map((entry, index) => (
                                                     <Cell key={`cell-${index}`} fill={['#6366f1', '#8b5cf6', '#10b981'][index % 3]} />
                                                 ))}
                                             </Bar>
@@ -750,7 +854,7 @@ export function TasksProjects() {
                                     </ResponsiveContainer>
                                 </div>
                                 <div className="grid grid-cols-3 gap-6 mt-10">
-                                    {projectProductivity.map((p, idx) => (
+                                    {projectStats.map((p, idx) => (
                                         <div key={p.name} className="flex flex-col gap-2">
                                             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{p.name}</span>
                                             <div className="flex items-end gap-2 text-2xl font-black text-slate-900 dark:text-white">
@@ -769,7 +873,7 @@ export function TasksProjects() {
                                     <ResponsiveContainer width="100%" height="100%">
                                         <PieChart>
                                             <Pie
-                                                data={projectProductivity}
+                                                data={projectStats}
                                                 cx="50%" cy="50%"
                                                 innerRadius={80}
                                                 outerRadius={140}
@@ -777,7 +881,7 @@ export function TasksProjects() {
                                                 dataKey="timeSpent"
                                                 nameKey="name"
                                             >
-                                                {projectProductivity.map((entry, index) => (
+                                                {projectStats.map((entry, index) => (
                                                     <Cell key={`cell-${index}`} fill={['#6366f1', '#f59e0b', '#10b981'][index % 3]} className="outline-none" />
                                                 ))}
                                             </Pie>
@@ -810,7 +914,7 @@ export function TasksProjects() {
                                         </div>
                                     </div>
                                     <h4 className="text-2xl font-black text-slate-900 dark:text-white mb-1 group-hover:text-primary-600 transition-colors uppercase tracking-tight">{project.name}</h4>
-                                    <p className="text-xs font-bold text-slate-400 mb-8 tracking-[0.05em]">Client: <span className="text-slate-900 dark:text-slate-300 font-black">{project.client}</span></p>
+                                    <p className="text-xs font-bold text-slate-400 mb-8 tracking-[0.05em]">Client: <span className="text-slate-900 dark:text-slate-300 font-black">{project.description || 'Internal'}</span></p>
 
                                     <div className="space-y-6 pt-6 border-t border-slate-50 dark:border-slate-800">
                                         <div className="flex items-center justify-between text-sm">
@@ -979,6 +1083,7 @@ export function TasksProjects() {
                 onSave={handleSaveTask}
                 defaultStatus={taskModalDefaultStatus}
                 employees={employees}
+                projects={projects}
             />
 
             <CreateGoalModal

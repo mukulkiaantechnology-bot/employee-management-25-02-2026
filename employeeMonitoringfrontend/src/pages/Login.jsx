@@ -19,17 +19,14 @@ export function Login() {
         setError('');
         setIsLoading(true);
 
-        // Simulate network delay
-        setTimeout(() => {
-            try {
-                auth.login(email, password);
-                navigate(from, { replace: true });
-            } catch (err) {
-                setError('Invalid email or password');
-            } finally {
-                setIsLoading(false);
-            }
-        }, 1000);
+        try {
+            await auth.login(email, password);
+            navigate(from, { replace: true });
+        } catch (err) {
+            setError(err.message || 'Invalid email or password');
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     return (

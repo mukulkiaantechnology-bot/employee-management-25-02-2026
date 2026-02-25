@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
     FileText, Download, Filter, Calendar, PieChart as PieChartIcon,
     Clock, Users, Zap, Search, ChevronDown, ExternalLink,
@@ -7,15 +7,6 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import {
-    appUsageDetails,
-    heatmapData,
-    topApps,
-    topWebsites,
-    mockStats,
-    employees,
-    attendanceData
-} from '../data/mockData';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
     LineChart, Line, AreaChart, Area, PieChart, Pie
@@ -63,10 +54,27 @@ const HeatmapCell = ({ value }) => {
 // --- Main Component ---
 
 export function Reports() {
-    const { employees: realTimeEmployees, timeEntries, addNotification } = useRealTime();
-    const [activeTab, setActiveTab] = useState('overview'); // overview, generator, timesheets, heatmap, activity
+    const {
+        employees: realTimeEmployees,
+        timeEntries,
+        reportsOverview,
+        fetchReportsOverview,
+        activityStats,
+        fetchActivityStats,
+        isLoading,
+        addNotification,
+        notifications
+    } = useRealTime();
+
+    const [activeTab, setActiveTab] = useState('overview'); // overview, activity, attendance, timesheets, heatmap, generator
     const [searchQuery, setSearchQuery] = useState('');
     const [isGenerating, setIsGenerating] = useState(false);
+
+    // Initial fetch for reports data
+    useEffect(() => {
+        if (!reportsOverview) fetchReportsOverview();
+        fetchActivityStats(new Date());
+    }, [reportsOverview, fetchReportsOverview, fetchActivityStats]);
 
     // --- Generator State ---
     const [reportConfig, setReportConfig] = useState({
@@ -81,34 +89,77 @@ export function Reports() {
     // --- Derived Statistics ---
 
     const teamProductivityData = useMemo(() => {
-        // Use mock department stats for visual richness if real data is sparse
-        return mockStats.departmentStats.map(d => ({
-            name: d.name,
-            value: d.productivity,
-            active: d.active
-        }));
-    }, []);
+        if (reportsOverview?.deptProductivity) {
+            return reportsOverview.deptProductivity.map(d => ({
+                name: d.department,
+                value: Math.round(d.avgProductivity),
+                active: d._count || 0
+            }));
+        }
+        return [];
+    }, [reportsOverview]);
 
     const productivityTrendData = useMemo(() => {
-        return mockStats.productivityTrend;
+        return reportsOverview?.trend || [
+            { name: 'Mon', productivity: 0 },
+            { name: 'Tue', productivity: 0 },
+            { name: 'Wed', productivity: 0 },
+            { name: 'Thu', productivity: 0 },
+            { name: 'Fri', productivity: 0 }
+        ];
+    }, [reportsOverview]);
+
+    const topAppsData = useMemo(() => {
+        return activityStats.apps.slice(0, 5).map(app => ({
+            name: app.name,
+            time: `${Math.round(app.usageSeconds / 60)}m`,
+            percent: Math.min(100, Math.round((app.usageSeconds / 28800) * 100)), // relative to 8h
+            color: 'text-blue-600'
+        }));
+    }, [activityStats.apps]);
+
+    const topWebsitesData = useMemo(() => {
+        return activityStats.websites.slice(0, 5).map(site => ({
+            name: site.name,
+            time: `${Math.round(site.usageSeconds / 60)}m`,
+            percent: Math.min(100, Math.round((site.usageSeconds / 28800) * 100)),
+            color: 'text-pink-600'
+        }));
+    }, [activityStats.websites]);
+
+    const heatmapDerivedData = useMemo(() => {
+        // Map actual activity markers to the heatmap grid if available
+        const hours = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00'];
+        const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+        return hours.map((h) => {
+            const row = { hour: h };
+            days.forEach((day) => {
+                // In a production scenario, this should be aggregated from activityStats
+                // For now, we return 0 if no real-time activity is present in that slot
+                row[day] = 0;
+            });
+            return row;
+        });
     }, []);
 
     // Payroll Calculation Logic
     const payrollData = useMemo(() => {
         return realTimeEmployees.map(emp => {
-            // Calculate hours from time entries
-            const empEntries = timeEntries.filter(e => e.employee === emp.name || (e.employee === 'You' && emp.id === 0));
+            const empEntries = timeEntries.filter(e => e.employeeId === emp.id);
 
-            // Simple sum of durations (mock parsing for demo)
             let totalHours = 0;
             empEntries.forEach(e => {
-                if (e.duration.includes('h')) {
-                    totalHours += parseInt(e.duration) + (e.duration.includes('m') ? 0.5 : 0);
+                if (e.duration) {
+                    // duration is in "HH:MM" format from RealTimeContext
+                    const [hrs, mins] = e.duration.split(':').map(Number);
+                    totalHours += hrs + (mins / 60);
                 }
             });
 
-            // Fallback to mock scheduled hours for demo if 0
-            const actualHours = totalHours > 0 ? totalHours : Math.floor(Math.random() * 40) + 120;
+            // Use actual derived hours from time entries
+            const actualHours = totalHours;
+            const rate = emp.hourlyRate || 45; // Support backend provided rate if mapped
 
             return {
                 id: emp.id,
@@ -116,10 +167,10 @@ export function Reports() {
                 role: emp.role,
                 avatar: emp.avatar,
                 department: emp.department,
-                totalHours: actualHours,
-                overtime: Math.max(0, actualHours - 160),
-                hourlyRate: 45, // Default mock rate
-                grossPay: (actualHours * 45).toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
+                totalHours: Math.round(actualHours * 10) / 10,
+                overtime: Math.max(0, Math.round((actualHours - 160) * 10) / 10),
+                hourlyRate: rate,
+                grossPay: (actualHours * rate).toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
                 status: actualHours >= 160 ? 'Ready' : 'Pending'
             };
         });
@@ -140,31 +191,35 @@ export function Reports() {
             headers = ['Employee', 'Department', 'Total Hours', 'Overtime', 'Gross Pay'];
             rows = payrollData.map(p => [p.employee, p.department, `${p.totalHours}h`, `${p.overtime}h`, p.grossPay.replace('$', '')]);
             filename = "cost_analysis_payroll_report";
-        } else if (type === 'compliance') {
-            headers = ['Incident ID', 'Title', 'Category', 'Date', 'Status'];
-            rows = [
-                ['AUD-101', 'System Access Audit', 'Security', '2026-02-12', 'Verified'],
-                ['AUD-102', 'Regional Labor Law Sync', 'Compliance', '2026-02-11', 'Passed'],
-                ['AUD-103', 'Overtime Violation Check', 'Policy', '2026-02-13', 'None'],
-                ['AUD-104', 'Data Encryption Review', 'Security', '2026-02-10', 'Verified']
-            ];
-            filename = "compliance_audit_summary";
+        } else if (type === 'compliance' || type === 'security') {
+            headers = ['ID', 'Title', 'Category', 'Date', 'Status'];
+            // Draw from notifications for real events
+            const relevantNotifications = (notifications || []).filter(n =>
+                type === 'security' ? n.category === 'Security' : n.category === 'Compliance' || n.category === 'System'
+            );
+
+            rows = (relevantNotifications.length > 0 ? relevantNotifications : (notifications || []).slice(0, 5)).map(n => [
+                n.id?.slice(-6).toUpperCase() || 'SYS-LOG',
+                n.title || n.message,
+                n.category || 'General',
+                new Date(n.createdAt || Date.now()).toISOString().split('T')[0],
+                'Verified'
+            ]);
+            filename = `${type}_audit_logs`;
         } else if (type === 'attendance') {
-            headers = ['Date', 'Status', 'Check In', 'Check Out', 'Late'];
-            rows = [
-                ['2026-02-01', 'Holiday', '-', '-', '-'],
-                ['2026-02-02', 'Present', '08:55 AM', '06:05 PM', 'No'],
-                ['2026-02-03', 'Present', '09:15 AM', '06:10 PM', 'Yes']
-            ];
+            headers = ['Employee', 'Date', 'Status', 'Check In', 'Check Out'];
+            // Flatten recent attendance from employees
+            const allAttendance = realTimeEmployees.flatMap(emp =>
+                (emp.attendance || []).map(a => [
+                    emp.name,
+                    new Date(a.date || Date.now()).toISOString().split('T')[0],
+                    a.status,
+                    a.checkIn || '-',
+                    a.checkOut || '-'
+                ])
+            );
+            rows = allAttendance.length > 0 ? allAttendance.slice(0, 20) : [['No Record', '-', '-', '-', '-']];
             filename = "attendance_summary";
-        } else if (type === 'security') {
-            headers = ['Timestamp', 'Event', 'Severity', 'Source IP'];
-            rows = [
-                ['2026-02-13 10:00', 'Unusual Login Pattern', 'Warning', '192.168.1.105'],
-                ['2026-02-13 11:30', 'Mass Data Export', 'Alert', '192.168.1.12'],
-                ['2026-02-12 14:45', 'Successful Admin Login', 'Info', '10.0.0.1']
-            ];
-            filename = "security_audit_logs";
         }
 
         let content = "";
@@ -238,6 +293,17 @@ export function Reports() {
             handleQuickGenerate(reportConfig.type);
         }, 1500);
     };
+
+    if (isLoading && !reportsOverview) {
+        return (
+            <div className="flex h-[60vh] items-center justify-center">
+                <div className="space-y-4 text-center">
+                    <div className="h-12 w-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto" />
+                    <p className="text-sm font-bold text-slate-500 animate-pulse">Assembling Analytics...</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6 md:space-y-8 pb-32 animate-fade-in px-4 md:px-0 max-w-full overflow-x-hidden box-border">
@@ -384,7 +450,7 @@ export function Reports() {
                                 </div>
                             </div>
                             <div className="space-y-6">
-                                {topApps.map((app, idx) => (
+                                {topAppsData.map((app, idx) => (
                                     <div key={idx} className="group">
                                         <div className="flex justify-between items-end mb-2">
                                             <span className="text-sm font-black text-slate-700 dark:text-slate-200">{app.name}</span>
@@ -410,7 +476,7 @@ export function Reports() {
                                 </div>
                             </div>
                             <div className="space-y-6">
-                                {topWebsites.map((site, idx) => (
+                                {topWebsitesData.map((site, idx) => (
                                     <div key={idx} className="group">
                                         <div className="flex justify-between items-end mb-2">
                                             <span className="text-sm font-black text-slate-700 dark:text-slate-200">{site.name}</span>
@@ -459,8 +525,8 @@ export function Reports() {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
-                                    {employees.slice(0, 10).map((emp, idx) => {
-                                        const attendance = attendanceData[idx % attendanceData.length];
+                                    {realTimeEmployees.slice(0, 10).map((emp, idx) => {
+                                        const attendance = emp.attendance?.[0] || { status: 'absent' };
                                         return (
                                             <tr key={emp.id} className="group hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
                                                 <td className="px-8 py-5">
@@ -626,7 +692,7 @@ export function Reports() {
                             <div className="grid grid-cols-[60px_1fr] gap-6">
                                 {/* Time Labels */}
                                 <div className="space-y-2 pt-8">
-                                    {heatmapData.map(h => (
+                                    {heatmapDerivedData.map(h => (
                                         <div key={h.hour} className="h-10 flex items-center justify-end text-[10px] font-black text-slate-300 uppercase tracking-widest">
                                             {h.hour}
                                         </div>
@@ -642,7 +708,7 @@ export function Reports() {
                                         ))}
                                     </div>
                                     <div className="grid grid-cols-7 gap-2">
-                                        {heatmapData.map((row, rIdx) => (
+                                        {heatmapDerivedData.map((row, rIdx) => (
                                             <React.Fragment key={rIdx}>
                                                 {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
                                                     <HeatmapCell key={`${rIdx}-${day}`} value={row[day]} />
